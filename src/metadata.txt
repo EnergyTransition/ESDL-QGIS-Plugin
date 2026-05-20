@@ -1,0 +1,9 @@
+[general]
+name=ESDL plugin
+description=TEST
+version=0.1
+qgisMinimumVersion=3.0
+supportsQt6=True
+author=Cheng-Kai Wang
+email=cheng-kai.wang@tno.nl
+icon=esdl.png
