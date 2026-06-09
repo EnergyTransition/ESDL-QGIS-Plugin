@@ -1,0 +1,8 @@
+{
+  "editor.formatOnSave": true,
+  "editor.rulers": [120],
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "python-envs.defaultEnvManager": "ms-python.python:system"
+}
