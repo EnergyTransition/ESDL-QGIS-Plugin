@@ -1,6 +1,8 @@
 import os
 from datetime import datetime
 
+from qgis.gui import QgsMapTool, QgsRubberBand
+from qgis.core import QgsWkbTypes, QgsGeometry
 from qgis.PyQt.QtWidgets import (
     QDialog,
     QDockWidget,
@@ -18,11 +20,19 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,
+    QComboBox,
+    QFormLayout,
+    QScrollArea,
+    QDoubleSpinBox,
+    QSpinBox,
+    QDialogButtonBox,
 )
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QVariant
+from qgis.PyQt.QtGui import QColor
 
 from .esdl_drive.auth import PasswordAuthWorker
 from .esdl_drive.esdl_drive import ESDLDrive
+from .esdl_visualize import _geom_to_qgspoint
 
 from esdl.esdl_handler import EnergySystemHandler
 
@@ -147,6 +157,8 @@ class ESDLEditDock(QDockWidget):
         self._esh = esh
         self._energy_system = energy_system
         self._sync_callback = None
+        self._add_asset_callback = None
+        self._connect_callback = None
         self._build_ui(source_label)
 
     # ------------------------------------------------------------------
@@ -166,6 +178,18 @@ class ESDLEditDock(QDockWidget):
         info_lbl.setWordWrap(True)
         layout.addWidget(info_lbl)
 
+        edit_row = QHBoxLayout()
+        self._add_asset_btn = QPushButton("Add Asset…")
+        self._add_asset_btn.setToolTip("Click the map to place a new ESDL asset")
+        self._add_asset_btn.clicked.connect(self._on_add_asset)
+        edit_row.addWidget(self._add_asset_btn)
+
+        self._connect_btn = QPushButton("Connect…")
+        self._connect_btn.setToolTip("Click two assets on the map to wire their ports")
+        self._connect_btn.clicked.connect(self._on_connect)
+        edit_row.addWidget(self._connect_btn)
+        layout.addLayout(edit_row)
+
         layout.addWidget(QLabel("Change log:"))
         self._log = QTextEdit()
         self._log.setReadOnly(True)
@@ -184,6 +208,22 @@ class ESDLEditDock(QDockWidget):
     def set_sync_callback(self, fn):
         """Register a callable that syncs QGIS layer edits back to the ESH."""
         self._sync_callback = fn
+
+    def set_add_asset_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Add Asset'."""
+        self._add_asset_callback = fn
+
+    def set_connect_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Connect'."""
+        self._connect_callback = fn
+
+    def _on_add_asset(self):
+        if callable(self._add_asset_callback):
+            self._add_asset_callback()
+
+    def _on_connect(self):
+        if callable(self._connect_callback):
+            self._connect_callback()
 
     def append_change(self, msg: str):
         """Append a timestamped entry to the change log."""
@@ -505,3 +545,429 @@ class _LoadPage(QWizardPage):
                 self._wiz._on_loaded(esh, es, source_label=path)
         except Exception as exc:
             self._info.setText(f"Parse error: {exc}")
+
+
+# =============================================================================
+# Helper
+# =============================================================================
+
+
+def _make_temp_asset(class_name: str):
+    """
+    Instantiate a no-arg pyESDL asset of *class_name* for attribute
+    introspection only.  Returns None if the class cannot be instantiated.
+    """
+    try:
+        from esdl import esdl
+
+        cls = getattr(esdl, class_name)
+        return cls()
+    except Exception:
+        return None
+
+
+# =============================================================================
+# Geometry-capture map tools
+# =============================================================================
+
+
+class PointCaptureMapTool(QgsMapTool):
+    """Single left-click captures a point geometry."""
+
+    geometry_captured = pyqtSignal(object)  # QgsGeometry
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+
+    def canvasReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pt = self.toMapCoordinates(event.pos())
+            self.geometry_captured.emit(QgsGeometry.fromPointXY(pt))
+            self.canvas().unsetMapTool(self)
+
+
+class LineCaptureMapTool(QgsMapTool):
+    """Left-click adds vertices; right-click finishes and emits a LineString."""
+
+    geometry_captured = pyqtSignal(object)  # QgsGeometry
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._points = []
+        self._rubber_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+        self._rubber_band.setColor(QColor(0, 120, 215))
+        self._rubber_band.setWidth(2)
+
+    def canvasPressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._points.append(self.toMapCoordinates(event.pos()))
+        elif event.button() == Qt.RightButton:
+            self._finish()
+
+    def canvasMoveEvent(self, event):
+        if not self._points:
+            return
+        cur = self.toMapCoordinates(event.pos())
+        self._rubber_band.reset(QgsWkbTypes.LineGeometry)
+        for p in self._points:
+            self._rubber_band.addPoint(p, False)
+        self._rubber_band.addPoint(cur, True)
+
+    def _finish(self):
+        if len(self._points) >= 2:
+            geom = QgsGeometry.fromPolylineXY(self._points)
+            self._rubber_band.reset()
+            self.canvas().unsetMapTool(self)
+            self.geometry_captured.emit(geom)
+
+    def deactivated(self):
+        self._rubber_band.reset()
+        self._points = []
+
+
+class PolygonCaptureMapTool(QgsMapTool):
+    """Left-click adds vertices; right-click finishes and emits a Polygon."""
+
+    geometry_captured = pyqtSignal(object)  # QgsGeometry
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._points = []
+        self._rubber_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self._rubber_band.setColor(QColor(0, 120, 215))
+        self._rubber_band.setFillColor(QColor(0, 120, 215, 40))
+        self._rubber_band.setWidth(2)
+
+    def canvasPressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._points.append(self.toMapCoordinates(event.pos()))
+        elif event.button() == Qt.RightButton:
+            self._finish()
+
+    def canvasMoveEvent(self, event):
+        if not self._points:
+            return
+        cur = self.toMapCoordinates(event.pos())
+        self._rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        for p in self._points:
+            self._rubber_band.addPoint(p, False)
+        self._rubber_band.addPoint(cur, True)
+
+    def _finish(self):
+        if len(self._points) >= 3:
+            geom = QgsGeometry.fromPolygonXY([self._points])
+            self._rubber_band.reset()
+            self.canvas().unsetMapTool(self)
+            self.geometry_captured.emit(geom)
+
+    def deactivated(self):
+        self._rubber_band.reset()
+        self._points = []
+
+
+# =============================================================================
+# PickAssetDialog — step 1: choose asset class and name (new add-asset flow)
+# =============================================================================
+
+
+class PickAssetDialog(QDialog):
+    """
+    First step of the dialog-first add-asset flow.
+
+    Shows a class combobox, a name field, and the geometry draw mode is
+    derived automatically from esdl_model.geom_hint_for_class().
+    """
+
+    def __init__(self, loaded_classes, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add ESDL Asset")
+        self.setMinimumWidth(380)
+        self._loaded_classes = list(loaded_classes)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        from .esdl_model import list_asset_classes
+
+        all_classes = list_asset_classes()
+        loaded_set = set(self._loaded_classes)
+        ordered = sorted(self._loaded_classes) + [
+            c for c in all_classes if c not in loaded_set
+        ]
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self._class_combo = QComboBox()
+        self._class_combo.addItems(ordered)
+        self._class_combo.currentTextChanged.connect(self._on_class_changed)
+        form.addRow("Asset class:", self._class_combo)
+
+        self._name_edit = QLineEdit()
+        form.addRow("Name:", self._name_edit)
+
+        self._geom_label = QLabel()
+        form.addRow("Draw mode:", self._geom_label)
+
+        layout.addLayout(form)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        if ordered:
+            self._on_class_changed(ordered[0])
+
+    def _on_class_changed(self, class_name: str):
+        from .esdl_model import geom_hint_for_class
+
+        hint = geom_hint_for_class(class_name)
+        labels = {
+            "Point": "Click once on the map",
+            "Line": "Click vertices, right-click to finish",
+            "Polygon": "Click vertices, right-click to finish",
+        }
+        self._geom_label.setText(labels.get(hint, hint))
+
+    def get_data(self) -> dict:
+        """Return dict with keys: class_name, name, geom_hint."""
+        from .esdl_model import geom_hint_for_class
+
+        class_name = self._class_combo.currentText()
+        return {
+            "class_name": class_name,
+            "name": self._name_edit.text().strip() or class_name,
+            "geom_hint": geom_hint_for_class(class_name),
+        }
+
+
+# =============================================================================
+# Geometry-capture — step 2: capture geometry draw by the user
+# =============================================================================
+
+# =============================================================================
+# AddAttributesDialog — step 3: fill attributes after geometry draw
+# =============================================================================
+
+
+class AddAttributesDialog(QDialog):
+    """
+    Third step of the dialog-first add-asset flow.
+
+    Shows a scrollable form of ESDL EAttribute fields for the given class.
+    Attributes can also be edited later in the QGIS feature table.
+    """
+
+    def __init__(self, class_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Attributes — {class_name}")
+        self.setMinimumWidth(400)
+        self._class_name = class_name
+        self._attr_widgets = {}
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        note = QLabel(
+            "<small style='color:grey'>Optional — you can also edit these "
+            "later in the QGIS feature table.</small>"
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        self._attr_container = QWidget()
+        self._attr_form = QFormLayout(self._attr_container)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self._attr_container)
+        scroll.setMinimumHeight(160)
+        layout.addWidget(scroll)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self._populate_fields()
+
+    # TODO: review
+    def _populate_fields(self):
+        from .esdl_visualize import _get_esdl_attr_fields
+
+        asset = _make_temp_asset(self._class_name)
+        if asset is None:
+            return
+        for field_name, qtype, default, enum_opts in _get_esdl_attr_fields(asset):
+            if enum_opts is not None:
+                w = QComboBox()
+                w.addItems(enum_opts)
+                if default in enum_opts:
+                    w.setCurrentText(default)
+            elif qtype == QVariant.Int:
+                w = QSpinBox()
+                w.setRange(-2_147_483_648, 2_147_483_647)
+                if isinstance(default, int):
+                    w.setValue(default)
+            elif qtype == QVariant.Double:
+                w = QDoubleSpinBox()
+                w.setRange(-1e15, 1e15)
+                w.setDecimals(6)
+                if isinstance(default, float):
+                    w.setValue(default)
+            else:
+                w = QLineEdit()
+                w.setText(str(default) if default else "")
+            self._attr_widgets[field_name] = w
+            self._attr_form.addRow(field_name + ":", w)
+
+    def get_attrs(self) -> dict:
+        """Return dict of field_name -> value (skipping blank strings)."""
+        attrs = {}
+        for field_name, w in self._attr_widgets.items():
+            if isinstance(w, (QSpinBox, QDoubleSpinBox)):
+                attrs[field_name] = w.value()
+            elif isinstance(w, QComboBox):
+                attrs[field_name] = w.currentText()
+            else:
+                v = w.text().strip()
+                if v:
+                    attrs[field_name] = v
+        return attrs
+
+
+# =============================================================================
+# ConnectAssetsMapTool — two-click tool that selects a source then target asset
+# =============================================================================
+
+
+class ConnectAssetsMapTool(QgsMapTool):
+    """
+    Two-step click tool for connecting asset ports.
+
+    1. First click  — identifies the source asset (highlighted by rubber band).
+    2. Second click — identifies the target asset; emits *assets_selected* with
+                      the two asset IDs, then deactivates.
+
+    Requires a reference to an ESDLVisualizer for spatial feature lookup.
+    """
+
+    assets_selected = pyqtSignal(str, str)  # source_id, target_id
+
+    def __init__(self, canvas, visualizer):
+        super().__init__(canvas)
+        self._visualizer = visualizer
+        self._source_id = None
+        self._rubber_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+        self._rubber_band.setColor(QColor(255, 140, 0))
+        self._rubber_band.setWidth(2)
+
+    def _tolerance(self) -> float:
+        return self.canvas().mapUnitsPerPixel() * 10
+
+    def canvasReleaseEvent(self, event):
+        point = self.toMapCoordinates(event.pos())
+        asset_id = self._visualizer.find_asset_id_near(point, self._tolerance())
+        if asset_id is None:
+            return
+        if self._source_id is None:
+            self._source_id = asset_id
+        elif asset_id != self._source_id:
+            self._rubber_band.reset()
+            self.assets_selected.emit(self._source_id, asset_id)
+            self.canvas().unsetMapTool(self)
+
+    def canvasMoveEvent(self, event):
+        if self._source_id is None:
+            return
+        src_asset = self._visualizer.get_asset_by_id(self._source_id)
+        if src_asset is None or src_asset.geometry is None:
+            return
+        src_pt = _geom_to_qgspoint(src_asset.geometry)
+        if src_pt is None:
+            return
+        cur_pt = self.toMapCoordinates(event.pos())
+        self._rubber_band.reset(QgsWkbTypes.LineGeometry)
+        self._rubber_band.addPoint(src_pt)
+        self._rubber_band.addPoint(cur_pt)
+
+    def deactivated(self):
+        self._rubber_band.reset()
+        self._source_id = None
+
+
+# =============================================================================
+# ConnectPortsDialog — port-picker for wiring two assets
+# =============================================================================
+
+
+class ConnectPortsDialog(QDialog):
+    """
+    Lets the user choose which OutPort of the source asset connects to which
+    InPort of the target asset.
+
+    Call *get_selected_ports()* after QDialog.Accepted to retrieve the pair.
+    """
+
+    def __init__(self, source_asset, target_asset, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Connect Ports")
+        self._source = source_asset
+        self._target = target_asset
+        self._out_ports = []
+        self._in_ports = []
+        self._setup_ui()
+
+    def _setup_ui(self):
+        from .esdl_model import get_connectable_ports
+
+        out_ports, _ = get_connectable_ports(self._source)
+        _, in_ports = get_connectable_ports(self._target)
+        self._out_ports = out_ports
+        self._in_ports = in_ports
+
+        src_name = getattr(self._source, "name", None) or type(self._source).__name__
+        tgt_name = getattr(self._target, "name", None) or type(self._target).__name__
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(f"<b>{src_name}</b> &nbsp;&#8594;&nbsp; <b>{tgt_name}</b>")
+        )
+
+        form = QFormLayout()
+        self._out_combo = QComboBox()
+        for p in out_ports:
+            label = f"{getattr(p, 'name', '') or 'OutPort'} [{type(p).__name__}]"
+            self._out_combo.addItem(label)
+        form.addRow(f"From — {src_name}:", self._out_combo)
+
+        self._in_combo = QComboBox()
+        for p in in_ports:
+            label = f"{getattr(p, 'name', '') or 'InPort'} [{type(p).__name__}]"
+            self._in_combo.addItem(label)
+        form.addRow(f"To — {tgt_name}:", self._in_combo)
+        layout.addLayout(form)
+
+        if not out_ports:
+            layout.addWidget(
+                QLabel(f"⚠ '{src_name}' has no OutPorts — add ports first.")
+            )
+        if not in_ports:
+            layout.addWidget(
+                QLabel(f"⚠ '{tgt_name}' has no InPorts — add ports first.")
+            )
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        btn_box.button(QDialogButtonBox.Ok).setEnabled(bool(out_ports and in_ports))
+        layout.addWidget(btn_box)
+
+    def get_selected_ports(self):
+        """Return *(out_port, in_port)* or *(None, None)* if unavailable."""
+        if not self._out_ports or not self._in_ports:
+            return None, None
+        return (
+            self._out_ports[self._out_combo.currentIndex()],
+            self._in_ports[self._in_combo.currentIndex()],
+        )
