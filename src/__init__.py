@@ -5,7 +5,7 @@ from qgis.PyQt.QtWidgets import QAction
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 
-from .esdl_ui import ESDLSourceDialog, ESDLEditDock, ESDLDriveDialog
+from .esdl_ui import ESDLSourceDialog, ESDLEditDock, ESDLDriveDialog, CarriersDialog
 from .esdl_visualize import ESDLVisualizer
 from . import esdl_model
 
@@ -62,6 +62,7 @@ class ESDLPlugin:
             self._edit_dock.set_sync_callback(self.visualizer.sync_from_layers)
             self._edit_dock.set_add_asset_callback(self._start_add_asset)
             self._edit_dock.set_connect_callback(self._start_connect)
+            self._edit_dock.set_edit_carriers_callback(self._open_carriers_dialog)
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self._edit_dock)
 
             # Wire QGIS layer edit signals to the dock's change log
@@ -218,3 +219,18 @@ class ESDLPlugin:
         tgt_name = tgt.name or type(tgt).__name__
         if self._edit_dock:
             self._edit_dock.append_change(f"Connected '{src_name}' \u2192 '{tgt_name}'")
+
+    # ------------------------------------------------------------------
+    # Edit-carriers flow
+    # ------------------------------------------------------------------
+
+    def _open_carriers_dialog(self):
+        from qgis.PyQt.QtWidgets import QDialog
+
+        dlg = CarriersDialog(
+            self.energy_system,
+            parent=self._edit_dock,
+        )
+        if dlg.exec_() == QDialog.Accepted:
+            if self._edit_dock:
+                self._edit_dock.append_change("Carriers updated")
