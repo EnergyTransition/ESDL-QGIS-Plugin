@@ -62,6 +62,7 @@ class ESDLPlugin:
             self._edit_dock.set_sync_callback(self.visualizer.sync_from_layers)
             self._edit_dock.set_add_asset_callback(self._start_add_asset)
             self._edit_dock.set_connect_callback(self._start_connect)
+            self._edit_dock.set_disconnect_callback(self._start_disconnect)
             self._edit_dock.set_refresh_layers_callback(self.visualizer.refresh_layers)
             self._edit_dock.set_edit_asset_callback(self._start_edit_asset)
             self._edit_dock.set_delete_asset_callback(self._start_delete_asset)
@@ -196,6 +197,57 @@ class ESDLPlugin:
             duration=8,
         )
 
+    # ------------------------------------------------------------------
+    # Disconnect flow
+    # ------------------------------------------------------------------
+
+    def _start_disconnect(self):
+        """Activate the single-click map tool for selecting an asset to disconnect."""
+        from .esdl_ui import EditAssetMapTool
+
+        tool = EditAssetMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_disconnect)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click an asset on the map to remove one of its connections.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_disconnect(self, asset_id: str):
+        """Open DisconnectDialog and remove the chosen connection."""
+        from qgis.PyQt.QtWidgets import QDialog
+        from .esdl_ui import DisconnectDialog
+
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if asset is None:
+            return
+
+        dlg = DisconnectDialog(asset, parent=self.iface.mainWindow())
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        out_port, in_port = dlg.get_selected_connection()
+        if out_port is None or in_port is None:
+            return
+
+        out_asset, in_asset = dlg.get_connection_assets()
+        esdl_model.disconnect_ports(out_port, in_port)
+        self.visualizer.refresh_layers()
+
+        out_name = getattr(out_asset, "name", None) or (
+            type(out_asset).__name__ if out_asset else "?"
+        )
+        in_name = getattr(in_asset, "name", None) or (
+            type(in_asset).__name__ if in_asset else "?"
+        )
+        if self._edit_dock:
+            self._edit_dock.append_change(
+                f"Disconnected '{out_name}' \u2194 '{in_name}'"
+            )
+
     def _on_assets_selected(self, source_id: str, target_id: str):
         """Open the ConnectPortsDialog and wire the chosen ports."""
         from qgis.PyQt.QtWidgets import QDialog
@@ -214,13 +266,16 @@ class ESDLPlugin:
         if out_port is None or in_port is None:
             return
 
-        esdl_model.connect_ports(out_port, in_port)
-        self.visualizer.add_connection_to_layer(src, tgt)
+        out_asset = dlg.get_out_asset()
+        in_asset = tgt if out_asset is src else src
 
-        src_name = src.name or type(src).__name__
-        tgt_name = tgt.name or type(tgt).__name__
+        esdl_model.connect_ports(out_port, in_port)
+        self.visualizer.add_connection_to_layer(out_asset, in_asset)
+
+        out_name = getattr(out_asset, "name", None) or type(out_asset).__name__
+        in_name = getattr(in_asset, "name", None) or type(in_asset).__name__
         if self._edit_dock:
-            self._edit_dock.append_change(f"Connected '{src_name}' \u2192 '{tgt_name}'")
+            self._edit_dock.append_change(f"Connected '{out_name}' \u2194 '{in_name}'")
 
     # ------------------------------------------------------------------
     # Edit-asset flow

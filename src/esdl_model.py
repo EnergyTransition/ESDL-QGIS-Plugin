@@ -60,13 +60,57 @@ def attach_to_area(asset, area):
 # ---------------------------------------------------------------------------
 
 
-# TODO: refinement needed --> suport also in_port and out_port order?
 def connect_ports(out_port, in_port):
     """
     Wire an OutPort to an InPort via the ESDL connectedTo reference.
     This is the canonical ESDL topology link: Asset→OutPort→InPort←Asset.
+    Port order is always normalised by the caller (ConnectPortsDialog).
     """
     out_port.connectedTo.append(in_port)
+
+
+def disconnect_ports(out_port, in_port):
+    """Remove the connectedTo link between *out_port* and *in_port*."""
+    try:
+        out_port.connectedTo.remove(in_port)
+    except Exception:
+        pass
+
+
+def get_asset_connections(asset):
+    """
+    Return a list of *(out_port, in_port, out_asset, in_asset)* tuples for
+    every connection involving *asset* — both outgoing (asset owns the
+    OutPort) and incoming (asset owns the InPort).
+    """
+    out_ports, in_ports = get_connectable_ports(asset)
+    connections = []
+
+    for out_port in out_ports:
+        try:
+            targets = list(out_port.connectedTo)
+        except Exception:
+            continue
+        for in_port in targets:
+            try:
+                in_asset = in_port.eContainer()
+            except Exception:
+                in_asset = None
+            connections.append((out_port, in_port, asset, in_asset))
+
+    for in_port in in_ports:
+        try:
+            sources = list(in_port.connectedTo)
+        except Exception:
+            continue
+        for out_port in sources:
+            try:
+                out_asset = out_port.eContainer()
+            except Exception:
+                out_asset = None
+            connections.append((out_port, in_port, out_asset, asset))
+
+    return connections
 
 
 # TODO: review

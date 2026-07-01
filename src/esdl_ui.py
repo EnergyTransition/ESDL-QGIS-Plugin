@@ -27,6 +27,7 @@ from qgis.PyQt.QtWidgets import (
     QSpinBox,
     QDialogButtonBox,
     QFrame,
+    QListWidget,
 )
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QVariant
 from qgis.PyQt.QtGui import QColor
@@ -160,6 +161,7 @@ class ESDLEditDock(QDockWidget):
         self._sync_callback = None
         self._add_asset_callback = None
         self._connect_callback = None
+        self._disconnect_callback = None
         self._refresh_layers_callback = None
         self._edit_asset_callback = None
         self._delete_asset_callback = None
@@ -209,6 +211,23 @@ class ESDLEditDock(QDockWidget):
 
         layout.addSpacing(8)
 
+        # --- [Add Connection] [Delete Connection] ---
+        conn_row = QHBoxLayout()
+        conn_row.setSpacing(4)
+        self._connect_btn = QPushButton("Add Connection")
+        self._connect_btn.setToolTip("Click two assets on the map to wire their ports")
+        self._connect_btn.clicked.connect(self._on_connect)
+        conn_row.addWidget(self._connect_btn)
+        self._disconnect_btn = QPushButton("Delete Connection")
+        self._disconnect_btn.setToolTip(
+            "Click an asset on the map to remove one of its connections"
+        )
+        self._disconnect_btn.clicked.connect(self._on_disconnect)
+        conn_row.addWidget(self._disconnect_btn)
+        layout.addLayout(conn_row)
+
+        layout.addSpacing(8)
+
         # --- [Browse ESDL] ---
         self._browse_esdl_btn = QPushButton("Browse ESDL")
         self._browse_esdl_btn.setToolTip(
@@ -216,14 +235,6 @@ class ESDLEditDock(QDockWidget):
         )
         self._browse_esdl_btn.clicked.connect(self._on_browse_esdl)
         layout.addWidget(self._browse_esdl_btn)
-
-        layout.addSpacing(8)
-
-        # --- [Connect Ports] ---
-        self._connect_btn = QPushButton("Connect Ports")
-        self._connect_btn.setToolTip("Click two assets on the map to wire their ports")
-        self._connect_btn.clicked.connect(self._on_connect)
-        layout.addWidget(self._connect_btn)
 
         layout.addSpacing(8)
 
@@ -255,8 +266,12 @@ class ESDLEditDock(QDockWidget):
         self._add_asset_callback = fn
 
     def set_connect_callback(self, fn):
-        """Register a callable invoked when the user clicks 'Connect'."""
+        """Register a callable invoked when the user clicks 'Add Connection'."""
         self._connect_callback = fn
+
+    def set_disconnect_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Delete Connection'."""
+        self._disconnect_callback = fn
 
     def set_refresh_layers_callback(self, fn):
         """Register a callable that refreshes QGIS layers after model changes."""
@@ -277,6 +292,10 @@ class ESDLEditDock(QDockWidget):
     def _on_connect(self):
         if callable(self._connect_callback):
             self._connect_callback()
+
+    def _on_disconnect(self):
+        if callable(self._disconnect_callback):
+            self._disconnect_callback()
 
     def _on_edit_asset(self):
         if callable(self._edit_asset_callback):
@@ -1002,10 +1021,15 @@ class EditAssetMapTool(QgsMapTool):
 
 class ConnectPortsDialog(QDialog):
     """
-    Lets the user choose which OutPort of the source asset connects to which
-    InPort of the target asset.
+    Lets the user choose which port of Asset A connects to which port of
+    Asset B.  All ports (InPort and OutPort) for both assets are shown.
 
-    Call *get_selected_ports()* after QDialog.Accepted to retrieve the pair.
+    The first selection constrains the second: selecting an OutPort on one
+    side disables all OutPorts on the other side, and vice-versa.
+
+    Call *get_selected_ports()* after QDialog.Accepted to retrieve the
+    normalized *(out_port, in_port)* pair.  Call *get_out_asset()* to find
+    which asset owns the OutPort (used for map arrow direction).
     """
 
     def __init__(self, source_asset, target_asset, parent=None):
@@ -1013,63 +1037,233 @@ class ConnectPortsDialog(QDialog):
         self.setWindowTitle("Connect Ports")
         self._source = source_asset
         self._target = target_asset
-        self._out_ports = []
-        self._in_ports = []
+        self._all_ports_a = []
+        self._all_ports_b = []
+        self._ok_btn = None
         self._setup_ui()
 
     def _setup_ui(self):
         from .esdl_model import get_connectable_ports
 
-        out_ports, _ = get_connectable_ports(self._source)
-        _, in_ports = get_connectable_ports(self._target)
-        self._out_ports = out_ports
-        self._in_ports = in_ports
+        out_a, in_a = get_connectable_ports(self._source)
+        out_b, in_b = get_connectable_ports(self._target)
+        self._all_ports_a = out_a + in_a
+        self._all_ports_b = out_b + in_b
 
         src_name = getattr(self._source, "name", None) or type(self._source).__name__
         tgt_name = getattr(self._target, "name", None) or type(self._target).__name__
 
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel(f"<b>{src_name}</b> &nbsp;&#8594;&nbsp; <b>{tgt_name}</b>")
-        )
+        # layout.addWidget(QLabel(f"<b>{src_name}</b> &nbsp;↔&nbsp; <b>{tgt_name}</b>"))
+        # layout.addSpacing(6)
 
-        form = QFormLayout()
-        self._out_combo = QComboBox()
-        for p in out_ports:
-            label = f"{getattr(p, 'name', '') or 'OutPort'} [{type(p).__name__}]"
-            self._out_combo.addItem(label)
-        form.addRow(f"From — {src_name}:", self._out_combo)
+        # Two-column layout: Asset A | ↔ | Asset B
+        cols = QHBoxLayout()
 
-        self._in_combo = QComboBox()
-        for p in in_ports:
-            label = f"{getattr(p, 'name', '') or 'InPort'} [{type(p).__name__}]"
-            self._in_combo.addItem(label)
-        form.addRow(f"To — {tgt_name}:", self._in_combo)
-        layout.addLayout(form)
+        col_a = QVBoxLayout()
+        col_a.addWidget(QLabel(f"<b>{src_name}</b>"))
+        self._combo_a = QComboBox()
+        for p in self._all_ports_a:
+            label = f"{getattr(p, 'name', '') or type(p).__name__} [{type(p).__name__}]"
+            self._combo_a.addItem(label)
+        col_a.addWidget(self._combo_a)
+        cols.addLayout(col_a)
 
-        if not out_ports:
-            layout.addWidget(
-                QLabel(f"⚠ '{src_name}' has no OutPorts — add ports first.")
-            )
-        if not in_ports:
-            layout.addWidget(
-                QLabel(f"⚠ '{tgt_name}' has no InPorts — add ports first.")
-            )
+        arrow_lbl = QLabel("↔")
+        arrow_lbl.setAlignment(Qt.AlignCenter)
+        cols.addWidget(arrow_lbl)
+
+        col_b = QVBoxLayout()
+        col_b.addWidget(QLabel(f"<b>{tgt_name}</b>"))
+        self._combo_b = QComboBox()
+        for p in self._all_ports_b:
+            label = f"{getattr(p, 'name', '') or type(p).__name__} [{type(p).__name__}]"
+            self._combo_b.addItem(label)
+        col_b.addWidget(self._combo_b)
+        cols.addLayout(col_b)
+
+        layout.addLayout(cols)
+
+        if not self._all_ports_a:
+            layout.addWidget(QLabel(f"⚠ '{src_name}' has no ports — add ports first."))
+        if not self._all_ports_b:
+            layout.addWidget(QLabel(f"⚠ '{tgt_name}' has no ports — add ports first."))
 
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
-        btn_box.button(QDialogButtonBox.Ok).setEnabled(bool(out_ports and in_ports))
+        self._ok_btn = btn_box.button(QDialogButtonBox.Ok)
         layout.addWidget(btn_box)
 
+        self._combo_a.currentIndexChanged.connect(self._on_combo_a_changed)
+        self._combo_b.currentIndexChanged.connect(self._on_update_ok)
+
+        # Trigger initial enable/disable pass
+        self._on_combo_a_changed(self._combo_a.currentIndex())
+
+    def _on_combo_a_changed(self, index: int):
+        """Disable same-type ports in combo B; update OK button state."""
+        if index < 0 or index >= len(self._all_ports_a):
+            self._on_update_ok()
+            return
+
+        selected_a = self._all_ports_a[index]
+        model = self._combo_b.model()
+        for i, port_b in enumerate(self._all_ports_b):
+            item = model.item(i)
+            if item is None:
+                continue
+            if type(port_b) is type(selected_a):
+                item.setFlags(Qt.NoItemFlags)
+            else:
+                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+
+        # If the current B selection became disabled, move to the first valid item
+        cur = self._combo_b.currentIndex()
+        if 0 <= cur < len(self._all_ports_b):
+            cur_item = model.item(cur)
+            if cur_item is not None and not (cur_item.flags() & Qt.ItemIsEnabled):
+                for i in range(len(self._all_ports_b)):
+                    it = model.item(i)
+                    if it is not None and (it.flags() & Qt.ItemIsEnabled):
+                        self._combo_b.setCurrentIndex(i)
+                        break
+
+        self._on_update_ok()
+
+    def _on_update_ok(self, _index: int = 0):
+        """Enable OK only when a valid OutPort ↔ InPort pair is selected."""
+        if self._ok_btn is None:
+            return
+        if not self._all_ports_a or not self._all_ports_b:
+            self._ok_btn.setEnabled(False)
+            return
+        idx_a = self._combo_a.currentIndex()
+        idx_b = self._combo_b.currentIndex()
+        if idx_a < 0 or idx_b < 0:
+            self._ok_btn.setEnabled(False)
+            return
+        from esdl import esdl
+
+        port_a = self._all_ports_a[idx_a]
+        port_b = self._all_ports_b[idx_b]
+        valid = (
+            isinstance(port_a, esdl.OutPort) and isinstance(port_b, esdl.InPort)
+        ) or (isinstance(port_a, esdl.InPort) and isinstance(port_b, esdl.OutPort))
+        self._ok_btn.setEnabled(valid)
+
     def get_selected_ports(self):
-        """Return *(out_port, in_port)* or *(None, None)* if unavailable."""
-        if not self._out_ports or not self._in_ports:
+        """
+        Return *(out_port, in_port)* normalized so out_port is always the
+        OutPort regardless of which combo it was selected from.
+        Returns *(None, None)* if no valid pair is available.
+        """
+        if not self._all_ports_a or not self._all_ports_b:
             return None, None
-        return (
-            self._out_ports[self._out_combo.currentIndex()],
-            self._in_ports[self._in_combo.currentIndex()],
-        )
+        from esdl import esdl
+
+        port_a = self._all_ports_a[self._combo_a.currentIndex()]
+        port_b = self._all_ports_b[self._combo_b.currentIndex()]
+        if isinstance(port_a, esdl.OutPort):
+            return port_a, port_b  # A=out, B=in
+        return port_b, port_a  # B=out, A=in
+
+    def get_out_asset(self):
+        """
+        Return the asset that owns the OutPort (for map arrow direction).
+        Must be called after *get_selected_ports()*.
+        """
+        if not self._all_ports_a:
+            return self._source
+        from esdl import esdl
+
+        port_a = self._all_ports_a[self._combo_a.currentIndex()]
+        return self._source if isinstance(port_a, esdl.OutPort) else self._target
+
+
+# =============================================================================
+# DisconnectDialog — pick an existing connection on an asset to remove
+# =============================================================================
+
+
+class DisconnectDialog(QDialog):
+    """
+    Shows all connections that involve *asset* (both outgoing and incoming)
+    and lets the user select one to remove.
+
+    Call *get_selected_connection()* after QDialog.Accepted to retrieve the
+    *(out_port, in_port)* pair to disconnect.
+    """
+
+    def __init__(self, asset, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Delete Connection")
+        self.setMinimumWidth(440)
+        self._asset = asset
+        self._connections = []  # [(out_port, in_port, out_asset, in_asset), ...]
+        self._ok_btn = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        from .esdl_model import get_asset_connections
+
+        self._connections = get_asset_connections(self._asset)
+        asset_name = getattr(self._asset, "name", None) or type(self._asset).__name__
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(f"Connections of <b>{asset_name}</b>:"))
+
+        self._list = QListWidget()
+        for out_port, in_port, out_asset, in_asset in self._connections:
+            out_port_name = getattr(out_port, "name", None) or "OutPort"
+            in_port_name = getattr(in_port, "name", None) or "InPort"
+            out_asset_name = (
+                getattr(out_asset, "name", None) or type(out_asset).__name__
+                if out_asset
+                else "?"
+            )
+            in_asset_name = (
+                getattr(in_asset, "name", None) or type(in_asset).__name__
+                if in_asset
+                else "?"
+            )
+            self._list.addItem(
+                f"{out_asset_name} [{out_port_name}]  \u2194  {in_asset_name} [{in_port_name}]"
+            )
+
+        if not self._connections:
+            layout.addWidget(QLabel(f"\u26a0 '{asset_name}' has no connections."))
+        else:
+            layout.addWidget(self._list)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        self._ok_btn = btn_box.button(QDialogButtonBox.Ok)
+        self._ok_btn.setEnabled(False)
+        layout.addWidget(btn_box)
+
+        self._list.currentRowChanged.connect(self._on_row_changed)
+
+    def _on_row_changed(self, row: int):
+        if self._ok_btn is not None:
+            self._ok_btn.setEnabled(row >= 0)
+
+    def get_selected_connection(self):
+        """Return *(out_port, in_port)* of the selected connection, or *(None, None)*."""
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._connections):
+            return None, None
+        out_port, in_port, _, _ = self._connections[row]
+        return out_port, in_port
+
+    def get_connection_assets(self):
+        """Return *(out_asset, in_asset)* of the selected connection, or *(None, None)*."""
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._connections):
+            return None, None
+        _, _, out_asset, in_asset = self._connections[row]
+        return out_asset, in_asset
 
 
 # =============================================================================
