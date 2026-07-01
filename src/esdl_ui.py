@@ -26,7 +26,6 @@ from qgis.PyQt.QtWidgets import (
     QDoubleSpinBox,
     QSpinBox,
     QDialogButtonBox,
-    QFrame,
 )
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QVariant
 from qgis.PyQt.QtGui import QColor
@@ -174,7 +173,9 @@ class ESDLEditDock(QDockWidget):
         inner = QWidget()
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
 
+        # Energy system info header
         name = self._energy_system.name or "(unnamed)"
         info_text = f"<b>{name}</b>"
         if source_label:
@@ -183,51 +184,61 @@ class ESDLEditDock(QDockWidget):
         info_lbl.setWordWrap(True)
         layout.addWidget(info_lbl)
 
-        edit_row = QHBoxLayout()
-        self._add_asset_btn = QPushButton("Add Asset…")
+        layout.addSpacing(8)
+
+        # --- [Add Asset] [Edit Asset] [Delete Asset] ---
+        asset_row = QHBoxLayout()
+        asset_row.setSpacing(4)
+        self._add_asset_btn = QPushButton("Add Asset")
         self._add_asset_btn.setToolTip("Click the map to place a new ESDL asset")
         self._add_asset_btn.clicked.connect(self._on_add_asset)
-        edit_row.addWidget(self._add_asset_btn)
+        asset_row.addWidget(self._add_asset_btn)
 
-        self._connect_btn = QPushButton("Connect…")
-        self._connect_btn.setToolTip("Click two assets on the map to wire their ports")
-        self._connect_btn.clicked.connect(self._on_connect)
-        edit_row.addWidget(self._connect_btn)
-
-        self._edit_carriers_btn = QPushButton("Edit Carriers…")
-        self._edit_carriers_btn.setToolTip("Add, edit, or delete energy carriers")
-        self._edit_carriers_btn.clicked.connect(self._on_edit_carriers)
-        edit_row.addWidget(self._edit_carriers_btn)
-        layout.addLayout(edit_row)
-
-        browse_row = QHBoxLayout()
-        self._edit_asset_btn = QPushButton("Edit Asset…")
+        self._edit_asset_btn = QPushButton("Edit Asset")
         self._edit_asset_btn.setToolTip(
             "Click an asset on the map to open it in the ESDL Browser"
         )
         self._edit_asset_btn.clicked.connect(self._on_edit_asset)
-        browse_row.addWidget(self._edit_asset_btn)
-        self._delete_asset_btn = QPushButton("Delete Asset…")
+        asset_row.addWidget(self._edit_asset_btn)
+
+        self._delete_asset_btn = QPushButton("Delete Asset")
         self._delete_asset_btn.setToolTip("Click an asset on the map to delete it")
         self._delete_asset_btn.clicked.connect(self._on_delete_asset)
-        browse_row.addWidget(self._delete_asset_btn)
-        self._browse_esdl_btn = QPushButton("Browse ESDL…")
+        asset_row.addWidget(self._delete_asset_btn)
+        layout.addLayout(asset_row)
+
+        layout.addSpacing(8)
+
+        # --- [Browse ESDL] ---
+        self._browse_esdl_btn = QPushButton("Browse ESDL")
         self._browse_esdl_btn.setToolTip(
             "Inspect and edit ESDL object attributes and references"
         )
         self._browse_esdl_btn.clicked.connect(self._on_browse_esdl)
-        browse_row.addWidget(self._browse_esdl_btn)
-        browse_row.addStretch()
-        layout.addLayout(browse_row)
+        layout.addWidget(self._browse_esdl_btn)
 
-        layout.addWidget(QLabel("Change log:"))
+        layout.addSpacing(8)
+
+        # --- [Connect Ports] ---
+        self._connect_btn = QPushButton("Connect Ports")
+        self._connect_btn.setToolTip("Click two assets on the map to wire their ports")
+        self._connect_btn.clicked.connect(self._on_connect)
+        layout.addWidget(self._connect_btn)
+
+        layout.addSpacing(8)
+
+        # --- [Export as .esdl file] ---
+        self._export_btn = QPushButton("Export as .esdl file")
+        self._export_btn.clicked.connect(self._export)
+        layout.addWidget(self._export_btn)
+
+        layout.addSpacing(8)
+
+        # --- Change log ---
+        layout.addWidget(QLabel("Change log"))
         self._log = QTextEdit()
         self._log.setReadOnly(True)
         layout.addWidget(self._log)
-
-        self._export_btn = QPushButton("Export as .esdl file…")
-        self._export_btn.clicked.connect(self._export)
-        layout.addWidget(self._export_btn)
 
         self.setWidget(inner)
 
