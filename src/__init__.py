@@ -63,6 +63,9 @@ class ESDLPlugin:
             self._edit_dock.set_add_asset_callback(self._start_add_asset)
             self._edit_dock.set_connect_callback(self._start_connect)
             self._edit_dock.set_edit_carriers_callback(self._open_carriers_dialog)
+            self._edit_dock.set_refresh_layers_callback(self.visualizer.refresh_layers)
+            self._edit_dock.set_edit_asset_callback(self._start_edit_asset)
+            self._edit_dock.set_delete_asset_callback(self._start_delete_asset)
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self._edit_dock)
 
             # Wire QGIS layer edit signals to the dock's change log
@@ -234,3 +237,88 @@ class ESDLPlugin:
         if dlg.exec_() == QDialog.Accepted:
             if self._edit_dock:
                 self._edit_dock.append_change("Carriers updated")
+
+    # ------------------------------------------------------------------
+    # Edit-asset flow
+    # ------------------------------------------------------------------
+
+    def _start_edit_asset(self):
+        """Activate the single-click map tool for selecting an asset to edit."""
+        from .esdl_ui import EditAssetMapTool
+
+        tool = EditAssetMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_edit)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click an asset on the map to open it in the ESDL Browser.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_edit(self, asset_id: str):
+        """Open the ESDL Browser navigated directly to the selected asset."""
+        from .esdl_ui import EsdlBrowserDialog
+
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if asset is None:
+            return
+        dlg = EsdlBrowserDialog(
+            self.energy_system,
+            initial_obj=asset,
+            parent=self.iface.mainWindow(),
+        )
+        dlg.exec_()
+        asset_name = getattr(asset, "name", None) or asset_id
+        if self._edit_dock:
+            self._edit_dock.append_change(f"Edited '{asset_name}' in ESDL Browser")
+        self.visualizer.refresh_layers()
+
+    # ------------------------------------------------------------------
+    # Delete-asset flow
+    # ------------------------------------------------------------------
+
+    def _start_delete_asset(self):
+        """Activate the single-click map tool for selecting an asset to delete."""
+        from .esdl_ui import EditAssetMapTool
+
+        tool = EditAssetMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_delete)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click an asset on the map to delete it.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_delete(self, asset_id: str):
+        """Confirm and delete the selected asset from the model."""
+        from qgis.PyQt.QtWidgets import QMessageBox
+
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if asset is None:
+            return
+        asset_name = getattr(asset, "name", None) or asset_id
+        reply = QMessageBox.question(
+            self.iface.mainWindow(),
+            "Delete asset",
+            f"Delete '{asset_name}' ({type(asset).__name__})?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        container = asset.eContainer()
+        feature = asset.eContainmentFeature()
+        if container is not None and feature is not None:
+            if feature.many:
+                container.eGet(feature).remove(asset)
+            else:
+                container.eSet(feature, None)
+        if self._edit_dock:
+            self._edit_dock.append_change(
+                f"Deleted {type(asset).__name__} '{asset_name}'"
+            )
+        self.visualizer.refresh_layers()

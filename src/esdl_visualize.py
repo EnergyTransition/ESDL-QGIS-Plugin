@@ -87,6 +87,7 @@ def _apply_directional_symbol(layer) -> None:
 # ---------------------------------------------------------------------------
 
 
+# TODO: make it part of esdl_model? or put in an util.py file?
 def _get_esdl_attr_fields(asset):
     """
     Use pyecore meta-model introspection to discover all primitive EAttribute
@@ -817,6 +818,105 @@ class ESDLVisualizer:
     # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
+
+    def refresh_layers(self):
+        """
+        Rebuild all layer features from the current state of the energy system.
+
+        Called after ESDL Browser operations (add / delete / attribute edits)
+        to keep QGIS map features in sync with the in-memory pyESDL model.
+        Existing layer objects (with their styling) are preserved; only the
+        feature data is replaced.
+        """
+        assets_by_class = {}
+        area_list = []
+        try:
+            root_area = self._es.instance[0].area
+        except (IndexError, AttributeError):
+            return
+        _collect_assets(root_area, assets_by_class, area_list)
+
+        # Rebuild the id-lookup from scratch
+        self._asset_by_id = {
+            entry["asset"].id: entry["asset"]
+            for entries in assets_by_class.values()
+            for entry in entries
+            if getattr(entry["asset"], "id", None)
+        }
+
+        # Refresh each asset layer
+        for class_name, layer in self._layers.items():
+            if class_name.startswith("_"):
+                continue
+            pr = layer.dataProvider()
+            pr.deleteFeatures([f.id() for f in layer.getFeatures()])
+
+            entries = assets_by_class.get(class_name, [])
+            if entries:
+                extra_defs = _get_esdl_attr_fields(entries[0]["asset"])
+                features = []
+                for e in entries:
+                    asset = e["asset"]
+                    geom = _to_qgs_geom(asset.geometry)
+                    if geom is None:
+                        continue
+                    extra_vals = []
+                    for name, qtype, *_ in extra_defs:
+                        val = getattr(asset, name, None)
+                        if isinstance(val, bool):
+                            extra_vals.append(str(val).lower())
+                        elif isinstance(val, (int, float)):
+                            extra_vals.append(val if val is not None else 0)
+                        else:
+                            extra_vals.append(str(val) if val is not None else "")
+                    f = QgsFeature(layer.fields())
+                    f.setGeometry(geom)
+                    f.setAttributes(
+                        [
+                            asset.id,
+                            asset.name or "",
+                            class_name,
+                            e["area_name"],
+                            *extra_vals,
+                        ]
+                    )
+                    features.append(f)
+                if features:
+                    pr.addFeatures(features)
+
+            layer.updateExtents()
+            layer.triggerRepaint()
+
+        # Refresh connections layer
+        if "_connections" in self._layers:
+            conn_layer = self._layers["_connections"]
+            pr = conn_layer.dataProvider()
+            pr.deleteFeatures([f.id() for f in conn_layer.getFeatures()])
+            conn_list = _collect_connections(assets_by_class)
+            if conn_list:
+                feats = []
+                for c in conn_list:
+                    f = QgsFeature(conn_layer.fields())
+                    f.setGeometry(
+                        QgsGeometry.fromPolylineXY(
+                            [
+                                QgsPointXY(c["from_lon"], c["from_lat"]),
+                                QgsPointXY(c["to_lon"], c["to_lat"]),
+                            ]
+                        )
+                    )
+                    f.setAttributes(
+                        [
+                            c["in_port_id"],
+                            c["in_asset_id"],
+                            c["out_port_id"],
+                            c["out_asset_id"],
+                        ]
+                    )
+                    feats.append(f)
+                pr.addFeatures(feats)
+            conn_layer.updateExtents()
+            conn_layer.triggerRepaint()
 
     def remove_layers(self):
         """Remove all managed layers from QgsProject."""
