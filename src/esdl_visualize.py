@@ -425,6 +425,7 @@ class ESDLVisualizer:
         self._layers = {}  # class_name -> QgsVectorLayer
         self._asset_by_id = {}  # asset.id -> pyESDL asset object
         self._extra_fields = {}  # class_name -> [field_name, ...]
+        self._group = None  # QgsLayerTreeGroup created by create_and_add_layers
 
     # ------------------------------------------------------------------
     # Build layers
@@ -441,6 +442,7 @@ class ESDLVisualizer:
         group_name = self._es.name or "ESDL"
         root = QgsProject.instance().layerTreeRoot()
         group = root.insertGroup(0, group_name)
+        self._group = group
 
         # One layer per asset class
         for class_name, entries in assets_by_class.items():
@@ -919,7 +921,10 @@ class ESDLVisualizer:
             conn_layer.triggerRepaint()
 
     def remove_layers(self):
-        """Remove all managed layers from QgsProject."""
+        """Remove all managed layers and the layer group from QgsProject."""
         ids = [layer.id() for layer in self._layers.values()]
         QgsProject.instance().removeMapLayers(ids)
         self._layers.clear()
+        if self._group is not None:
+            QgsProject.instance().layerTreeRoot().removeChildNode(self._group)
+            self._group = None

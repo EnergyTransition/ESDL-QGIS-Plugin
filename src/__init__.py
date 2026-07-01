@@ -39,6 +39,9 @@ class ESDLPlugin:
         if self._edit_dock is not None:
             self.iface.removeDockWidget(self._edit_dock)
             self._edit_dock = None
+        if self.visualizer is not None:
+            self.visualizer.remove_layers()
+            self.visualizer = None
         del self.action
 
     def run(self):
@@ -66,6 +69,7 @@ class ESDLPlugin:
             self._edit_dock.set_refresh_layers_callback(self.visualizer.refresh_layers)
             self._edit_dock.set_edit_asset_callback(self._start_edit_asset)
             self._edit_dock.set_delete_asset_callback(self._start_delete_asset)
+            self._edit_dock.set_close_callback(self._on_dock_closed)
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self._edit_dock)
 
             # Wire QGIS layer edit signals to the dock's change log
@@ -102,6 +106,18 @@ class ESDLPlugin:
             on_drive_requested=open_drive,
         )
         chooser.exec()
+
+    # ------------------------------------------------------------------
+    # Dock close
+    # ------------------------------------------------------------------
+
+    def _on_dock_closed(self):
+        """Called after the user confirms closing the ESDL Editor dock."""
+        if self.visualizer is not None:
+            self.visualizer.remove_layers()
+            self.visualizer = None
+        self._edit_dock = None
+        self.energy_system = None
 
     # ------------------------------------------------------------------
     # Add-asset flow

@@ -165,6 +165,7 @@ class ESDLEditDock(QDockWidget):
         self._refresh_layers_callback = None
         self._edit_asset_callback = None
         self._delete_asset_callback = None
+        self._close_callback = None
         self._build_ui(source_label)
 
     # ------------------------------------------------------------------
@@ -285,6 +286,10 @@ class ESDLEditDock(QDockWidget):
         """Register a callable invoked when the user clicks 'Delete Asset'."""
         self._delete_asset_callback = fn
 
+    def set_close_callback(self, fn):
+        """Register a callable invoked after the dock is confirmed closed."""
+        self._close_callback = fn
+
     def _on_add_asset(self):
         if callable(self._add_asset_callback):
             self._add_asset_callback()
@@ -320,7 +325,8 @@ class ESDLEditDock(QDockWidget):
     # Export
     # ------------------------------------------------------------------
 
-    def _export(self):
+    def _export(self) -> bool:
+        """Sync and save to a .esdl file.  Returns True if saved, False if cancelled or failed."""
         if callable(self._sync_callback):
             self._sync_callback()
 
@@ -334,15 +340,45 @@ class ESDLEditDock(QDockWidget):
             "ESDL files (*.esdl);;XML files (*.xml)",
         )
         if not path:
-            return
+            return False
 
         try:
             xml = self._esh.to_string()
             with open(path, "w", encoding="utf-8") as f:
                 f.write(xml)
             self.append_change(f"Exported to {path}")
+            return True
         except Exception as exc:
             self.append_change(f"Export failed: {exc}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Close
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, event):
+        """Warn about unsaved changes before closing the dock."""
+        if self._log.toPlainText().strip():
+            reply = QMessageBox.question(
+                self,
+                "Unsaved changes",
+                "You have unsaved changes in this ESDL session.\n"
+                "Export as .esdl before closing?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if reply == QMessageBox.Save:
+                saved = self._export()
+                if not saved:
+                    # User cancelled the file picker — keep the dock open
+                    event.ignore()
+                    return
+        event.accept()
+        if callable(self._close_callback):
+            self._close_callback()
 
 
 class ESDLDriveDialog(QWizard):
