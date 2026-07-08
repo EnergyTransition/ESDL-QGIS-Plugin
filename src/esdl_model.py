@@ -213,3 +213,35 @@ def create_asset_with_geom(class_name: str, name: str, esdl_geom, attrs: dict = 
             except Exception:
                 pass
     return asset
+
+
+# ---------------------------------------------------------------------------
+# CostInformation helpers
+# ---------------------------------------------------------------------------
+
+
+def set_cost_value(asset, cost_ref_name: str, value: float) -> None:
+    """
+    Write *value* to asset.costInformation.<cost_ref_name>.value, lazily
+    creating a CostInformation and a SingleValue when they are absent.
+
+    If the existing profile is a non-SingleValue GenericProfile subtype
+    (e.g. DateTimeProfile) the function does nothing — only SingleValue
+    supports a plain scalar .value attribute.
+    """
+    from esdl import esdl
+
+    ci = getattr(asset, "costInformation", None)
+    if ci is None:
+        ci = esdl.CostInformation(id=str(uuid.uuid4()))
+        asset.costInformation = ci
+
+    profile = getattr(ci, cost_ref_name, None)
+    if profile is None:
+        profile = esdl.SingleValue(id=str(uuid.uuid4()))
+        setattr(ci, cost_ref_name, profile)
+    elif not isinstance(profile, esdl.SingleValue):
+        # Non-scalar profile type — do not overwrite with a raw float
+        return
+
+    profile.value = float(value)

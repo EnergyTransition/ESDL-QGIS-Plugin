@@ -31,6 +31,97 @@ _STANDARD_FIELDS = frozenset({"id", "name", "esdl_class", "area_name"})
 _ICONS_DIR = Path(__file__).parent / "icons"
 
 
+# ---------------------------------------------------------------------------
+# CostInformation column helpers
+# ---------------------------------------------------------------------------
+
+_COST_REF_NAMES_CACHE = None  # module-level, introspected once
+
+
+def _cost_ref_names() -> list:
+    """
+    Return all EReference field names on CostInformation (cached).
+    These map to the cost profile slots: investmentCosts, installationCosts, …
+    """
+    global _COST_REF_NAMES_CACHE
+    if _COST_REF_NAMES_CACHE is not None:
+        return _COST_REF_NAMES_CACHE
+    try:
+        from esdl import esdl
+        from pyecore.ecore import EReference as _ERef
+
+        _COST_REF_NAMES_CACHE = [
+            f.name
+            for f in esdl.CostInformation.eClass.eAllStructuralFeatures()
+            if isinstance(f, _ERef)
+        ]
+    except Exception:
+        _COST_REF_NAMES_CACHE = []
+    return _COST_REF_NAMES_CACHE
+
+
+def _asset_has_cost_info(asset) -> bool:
+    """Return True if the asset's eClass exposes a costInformation EReference."""
+    try:
+        from pyecore.ecore import EReference as _ERef
+
+        return any(
+            f.name == "costInformation" and isinstance(f, _ERef)
+            for f in type(asset).eClass.eAllStructuralFeatures()
+        )
+    except Exception:
+        return False
+
+
+def _cost_unit_str(profile) -> str:
+    """
+    Build a human-readable unit string from a SingleValue's
+    profileQuantityAndUnit reference.  Falls back to "" on any error.
+    """
+    try:
+        qu = getattr(profile, "profileQuantityAndUnit", None)
+        if qu is None:
+            return ""
+        if qu.description:
+            return str(qu.description)
+
+        def _e(val):
+            s = str(val)
+            return "" if s.startswith("NONE") or s.startswith("UNDEFINED") else s
+
+        numerator = (_e(qu.multiplier) + _e(qu.unit)).strip()
+        denominator = (_e(qu.perMultiplier) + _e(qu.perUnit)).strip()
+        if numerator and denominator:
+            return f"{numerator}/{denominator}"
+        return numerator or denominator
+    except Exception:
+        return ""
+
+
+def _read_cost_row(asset, ref_names: list) -> list:
+    """
+    Return a flat list [value_or_None, unit_str, value_or_None, unit_str, …]
+    aligned to *ref_names*.  Only SingleValue objects contribute a numeric
+    value; other GenericProfile subtypes leave the value cell as None.
+    """
+    try:
+        from esdl import esdl as _esdl
+    except Exception:
+        return [None, ""] * len(ref_names)
+
+    ci = getattr(asset, "costInformation", None)
+    row = []
+    for ref_name in ref_names:
+        profile = getattr(ci, ref_name, None) if ci is not None else None
+        if profile is not None and isinstance(profile, _esdl.SingleValue):
+            row.append(profile.value if profile.value is not None else None)
+            row.append(_cost_unit_str(profile))
+        else:
+            row.append(None)
+            row.append("")
+    return row
+
+
 def _apply_point_icon(layer, class_name: str) -> None:
     """
     If src/icons/{class_name}.png exists, replace the layer's default marker
@@ -425,6 +516,7 @@ class ESDLVisualizer:
         self._layers = {}  # class_name -> QgsVectorLayer
         self._asset_by_id = {}  # asset.id -> pyESDL asset object
         self._extra_fields = {}  # class_name -> [field_name, ...]
+        self._cost_fields = {}  # class_name -> [cost_ref_name, ...] (may be empty)
         self._group = None  # QgsLayerTreeGroup created by create_and_add_layers
 
     # ------------------------------------------------------------------
@@ -497,6 +589,19 @@ class ESDLVisualizer:
         extra_defs = _get_esdl_attr_fields(entries[0]["asset"])
         self._extra_fields[class_name] = [name for name, *_ in extra_defs]
         pr.addAttributes([QgsField(name, qtype) for name, qtype, *_ in extra_defs])
+
+        # CostInformation columns — one value+unit pair per cost reference field
+        cost_refs = (
+            _cost_ref_names() if _asset_has_cost_info(entries[0]["asset"]) else []
+        )
+        self._cost_fields[class_name] = cost_refs
+        for ref_name in cost_refs:
+            pr.addAttributes(
+                [
+                    QgsField(f"ci_{ref_name}_value", QVariant.Double),
+                    QgsField(f"ci_{ref_name}_unit", QVariant.String),
+                ]
+            )
         layer.updateFields()
 
         # Custom icon for point layers; directional arrow for line layers
@@ -505,9 +610,12 @@ class ESDLVisualizer:
         elif geom_type_str == "LineString":
             _apply_directional_symbol(layer)
 
-        # Make id and esdl_class read-only in the attribute form
+        # Make id and esdl_class read-only; all unit columns are also read-only
         form_cfg = layer.editFormConfig()
-        for read_only_field in ("id", "esdl_class"):
+        read_only_fields = ["id", "esdl_class"] + [
+            f"ci_{r}_unit" for r in cost_refs
+        ]
+        for read_only_field in read_only_fields:
             idx = layer.fields().indexOf(read_only_field)
             if idx >= 0:
                 form_cfg.setReadOnly(idx, True)
@@ -521,7 +629,7 @@ class ESDLVisualizer:
                 continue
             self._asset_by_id[asset.id] = asset
 
-            # Build attribute list: standard fields first, then extra
+            # Build attribute list: standard fields, extra attrs, cost columns
             extra_vals = []
             for name, qtype, *_ in extra_defs:
                 val = getattr(asset, name, None)
@@ -532,6 +640,8 @@ class ESDLVisualizer:
                 else:
                     extra_vals.append(str(val) if val is not None else "")
 
+            cost_vals = _read_cost_row(asset, cost_refs)
+
             f = QgsFeature()
             f.setGeometry(geom)
             f.setAttributes(
@@ -541,6 +651,7 @@ class ESDLVisualizer:
                     class_name,
                     e["area_name"],
                     *extra_vals,
+                    *cost_vals,
                 ]
             )
             features.append(f)
@@ -630,10 +741,11 @@ class ESDLVisualizer:
                     extra_vals.append(val if val is not None else 0)
                 else:
                     extra_vals.append(str(val) if val is not None else "")
+            cost_vals = _read_cost_row(asset, self._cost_fields.get(class_name, []))
             f = QgsFeature(layer.fields())
             f.setGeometry(geom)
             f.setAttributes(
-                [asset.id, asset.name or "", class_name, area_name, *extra_vals]
+                [asset.id, asset.name or "", class_name, area_name, *extra_vals, *cost_vals]
             )
             layer.dataProvider().addFeatures([f])
             layer.updateExtents()
@@ -809,6 +921,17 @@ class ESDLVisualizer:
                     if raw is not None:
                         _set_esdl_attr(asset, field_name, raw)
 
+                # CostInformation — write SingleValue.value back for each cost column
+                for ref_name in self._cost_fields.get(class_name, []):
+                    raw = feat[f"ci_{ref_name}_value"]
+                    if raw is not None and raw != "":
+                        from .esdl_model import set_cost_value
+
+                        try:
+                            set_cost_value(asset, ref_name, float(raw))
+                        except Exception:
+                            pass
+
     # ------------------------------------------------------------------
     # Serialise
     # ------------------------------------------------------------------
@@ -871,6 +994,9 @@ class ESDLVisualizer:
                             extra_vals.append(val if val is not None else 0)
                         else:
                             extra_vals.append(str(val) if val is not None else "")
+                    cost_vals = _read_cost_row(
+                        asset, self._cost_fields.get(class_name, [])
+                    )
                     f = QgsFeature(layer.fields())
                     f.setGeometry(geom)
                     f.setAttributes(
@@ -880,6 +1006,7 @@ class ESDLVisualizer:
                             class_name,
                             e["area_name"],
                             *extra_vals,
+                            *cost_vals,
                         ]
                     )
                     features.append(f)
