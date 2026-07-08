@@ -6,63 +6,58 @@ $qgisPlugins = "C:\Users\wangck\AppData\Roaming\QGIS\QGIS3\profiles\default\pyth
 New-Item -ItemType SymbolicLink -Path "$qgisPlugins\esdl_plugin" -Target "C:\Users\wangck\projects\playground\QGIS - DTK\plugin\src"
 ```
 
+# TODOs
 
-```mermaid
-graph TB
-    subgraph QGIS["QGIS"]
-        TB[Toolbar button]
-        LAYERS[Memory Vector Layers\none per ESDL asset class]
-        ATTRFORM[Attribute Table / Map\nNative QGIS editing]
-    end
+2026-06-11
 
-    subgraph Plugin["esdl_plugin  (src/)"]
-        INIT["__init__.py\nESDLPlugin\n─────────────\nrun()\non_loaded()"]
+- Pack required packages in the plugin
+- Should the plugin support loading multiple ESDLs? --> No for now.
+- [] Review if import statement can be hoisted to top from fn level.
+- Function argu should have type hint e.g. esdl.Area
 
-        subgraph Wizard["esdl_wizard.py  —  ESDLWizard"]
-            P1["Page 1 · AuthPage\n─────────────\nusername / password\nconnection settings\n(env var defaults)"]
-            P2["Page 2 · BrowsePage\n─────────────\nQTreeWidget\njstree JSON → file tree\nselect .esdl"]
-            P3["Page 3 · LoadPage\n─────────────\nfetch + parse ESDL\nchange log\nexport .esdl"]
-        end
+- [] Have a way to refresh connection lines when asset is moved.
+  - [v] Understand what are the options there.
+    - QGIS native topology tools (Settings → Snapping → Topological editing) only work within the same layer, not across layers.
+    - The implementation of live update of connection line is doable, but can be expensive.
+    - Possible workaround is to have a Connection refresh btn to update the visualization of connection line.
+- [] Add hierarchy to asset options
+  - either grouped by asset capability or recent / generic
+  - [] Return empty list in fallback at list_asset_classes() in esdl_model.py
+- [v] Check if attribue options support getting ENUM values
+- [v] Use ESDL icon on feature.
+  - [] Should ESDL icon be published as a library?
 
-        VIZ["esdl_visualize.py\nESDLVisualizer\n─────────────\ncreate_and_add_layers()\nsync_from_layers()\nto_xml()"]
+2026-07-01
 
-        subgraph Drive["esdl_drive/"]
-            AUTH["auth.py\nPasswordAuthWorker  ROPC grant\nAuthWorker          PKCE + browser"]
-            API["esdl_drive.py\nESDLDrive\n─────────────\nbrowse_cdo()\nget_resource()\nput_resource()"]
-        end
-    end
+- [v] Refine port connection UX/UI
+  - Also added Delete Connection
+- [v] Set carrier on port? --> implemented with ESDL browser
+- [v] Asset handling with ESDL browser;
+  - [v] Also used for asset editing
+- [v] Delete asset button
+- [ ] Move asset button
 
-    subgraph External["External services"]
-        KC["Keycloak\n/protocol/openid-connect/token"]
-        ESDLDRIVE["ESDL Drive  :9080\n/store/browse\n/store/resource/…"]
-    end
+- [WIP] Table editor with costInformation support
+  - Should this be implemented as special module for future maintainability?
 
-    FILE[".esdl file\n(local export)"]
+- [v] Remove layer group after the pulgin exit
+- [] Add id suffix to asset name
 
-    TB -->|run| INIT
-    INIT -->|show| Wizard
-    P1 -->|login| AUTH
-    AUTH -->|POST password grant| KC
-    KC -->|access_token| AUTH
-    AUTH -->|token| P1
+  ![alt text](docs/image.png)
 
-    P2 -->|browse_cdo + token| API
-    API -->|GET /store/browse| ESDLDRIVE
-    ESDLDRIVE -->|jstree JSON| API
-    API -->|json| P2
+- [v] Quick load performance test on a large 'NWN' ESDL
 
-    P3 -->|get_resource + token| API
-    API -->|GET /store/resource/…| ESDLDRIVE
-    ESDLDRIVE -->|ESDL XML| API
-    API -->|content| P3
-    P3 -->|esh + energy_system| INIT
+- [ ] Fully architecture cleanup
+  - Assess the current implementation and components, reorganize codebase based for modularity design.
 
-    INIT -->|create_and_add_layers| VIZ
-    VIZ -->|QgsVectorLayer × N| LAYERS
-    LAYERS --> ATTRFORM
+- [ ] How the whole plugin is ESDL model compatible? If ESDL model change, will thing work properly after dependency update?
 
-    INIT -->|sync_callback| VIZ
-    P3 -->|sync_callback on export| VIZ
-    VIZ -->|sync_from_layers| LAYERS
-    P3 -->|esh.to_string| FILE
-```
+Bug
+
+- [ ] selector buffer, sometimes not very precise (e.g. clicking on port, but a pipe is selected)
+- [ ] Cancel Add/Edit/Delete action is not straightforward (cursor remains a + sign)
+
+TBD:
+
+- How is number of asset ports defined? e.g. HeatingDemand, what should be the default # of ports?
+- Should ESDL icon be published as a library?

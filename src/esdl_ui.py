@@ -44,9 +44,7 @@ _DEFAULT_KC_REALM = os.environ.get(
     "ESDL_KC_REALM", "http://localhost:8080/auth/realms/esdl-mapeditor"
 )
 _DEFAULT_KC_CLIENT = os.environ.get("ESDL_KC_CLIENT", "cdo-mondaine")
-_DEFAULT_KC_SECRET = os.environ.get(
-    "ESDL_KC_SECRET", "329ab44b-087b-44d2-89b7-da139d32a7b1"
-)
+_DEFAULT_KC_SECRET = os.environ.get("ESDL_KC_SECRET", "")
 
 
 class ESDLSourceDialog(QDialog):
