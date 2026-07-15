@@ -1,21 +1,43 @@
+# ESDL QGIS Plugin
+
+Load, visualize, and edit [ESDL](https://energytransition.github.io/) energy system files directly in QGIS.
+
+## Installation
+
+### Install Python dependencies
+
+The plugin requires `pyESDL` and its dependencies. Install them using the **OSGeo4W Shell** (shipped with QGIS — search for it in the Start Menu):
+
+```bat
+pip install pyESDL
+```
+
+### Restart QGIS
+
+After installing the dependencies, restart QGIS and enable the plugin via **Plugins → Manage and Install Plugins**.
+
+---
+
 ## Development setup
 
 ```
 # Run once in an elevated PowerShell
 $qgisPlugins = "C:\Users\wangck\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins"
-New-Item -ItemType SymbolicLink -Path "$qgisPlugins\esdl_plugin" -Target "C:\Users\wangck\projects\playground\QGIS - DTK\plugin\src"
+
+New-Item -ItemType SymbolicLink -Path "$qgisPlugins\ESDL-QGIS-Plugin" -Target "C:\Users\wangck\projects\github\ESDL-QGIS-Plugin\src"
 ```
 
 # TODOs
 
 2026-06-11
 
-- Pack required packages in the plugin
+- [ ] Pack required packages in the plugin
+- [ ] Add License file and add license field in metadata.txt
 - Should the plugin support loading multiple ESDLs? --> No for now.
-- [] Review if import statement can be hoisted to top from fn level.
+- [ ] Review if import statement can be hoisted to top from fn level.
 - Function argu should have type hint e.g. esdl.Area
 
-- [] Have a way to refresh connection lines when asset is moved.
+- [ ] Have a way to refresh connection lines when asset is moved.
   - [v] Understand what are the options there.
     - QGIS native topology tools (Settings → Snapping → Topological editing) only work within the same layer, not across layers.
     - The implementation of live update of connection line is doable, but can be expensive.

@@ -1,2 +1,1 @@
 pyESDL>=26.4
-requests

@@ -1,9 +1,10 @@
 [general]
-name=ESDL plugin
-description=TEST
-version=0.1
-qgisMinimumVersion=3.0
-supportsQt6=True
+name=ESDL QGIS Plugin
+description=Load, visualize, edit and export ESDL file in QGIS
+version=0.1.0
+qgisMinimumVersion=3.16
 author=Cheng-Kai Wang
 email=cheng-kai.wang@tno.nl
 icon=esdl.png
+repository=https://github.com/EnergyTransition/ESDL-QGIS-Plugin
+tracker=https://github.com/EnergyTransition/ESDL-QGIS-Plugin/issues
