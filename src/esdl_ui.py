@@ -806,19 +806,50 @@ class PickAssetDialog(QDialog):
         self._setup_ui()
 
     def _setup_ui(self):
-        from .esdl_model import list_asset_classes
+        from .esdl_model import list_asset_classes_grouped
+        from qgis.PyQt.QtGui import QStandardItemModel, QStandardItem
 
-        all_classes = list_asset_classes()
+        groups = list_asset_classes_grouped()
         loaded_set = set(self._loaded_classes)
-        ordered = sorted(self._loaded_classes) + [
-            c for c in all_classes if c not in loaded_set
-        ]
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self._class_combo = QComboBox()
-        self._class_combo.addItems(ordered)
+        model = QStandardItemModel(self._class_combo)
+
+        _first_idx = [None]  # mutable container for nonlocal-style capture
+
+        def _add_header(text):
+            item = QStandardItem(text)
+            item.setFlags(Qt.NoItemFlags)
+            item.setForeground(QColor("#2D3C6B"))
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(font.pointSize() + 2)
+            item.setFont(font)
+            model.appendRow(item)
+
+        def _add_class(name):
+            item = QStandardItem(name)
+            model.appendRow(item)
+            if _first_idx[0] is None:
+                _first_idx[0] = model.rowCount() - 1
+
+        if self._loaded_classes:
+            _add_header("In session")
+            for cls_name in sorted(self._loaded_classes):
+                _add_class(cls_name)
+
+        for group_name, class_names in groups.items():
+            remaining = [c for c in class_names if c not in loaded_set]
+            if not remaining:
+                continue
+            _add_header(group_name)
+            for cls_name in remaining:
+                _add_class(cls_name)
+
+        self._class_combo.setModel(model)
         self._class_combo.currentTextChanged.connect(self._on_class_changed)
         form.addRow("Asset class:", self._class_combo)
 
@@ -835,10 +866,14 @@ class PickAssetDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
-        if ordered:
-            self._on_class_changed(ordered[0])
+        if _first_idx[0] is not None:
+            self._class_combo.setCurrentIndex(_first_idx[0])
+            self._on_class_changed(self._class_combo.currentText())
 
     def _on_class_changed(self, class_name: str):
+        # Skip group-header items (non-selectable)
+        if not class_name or not class_name[0].isalpha():
+            return
         from .esdl_model import geom_hint_for_class
 
         hint = geom_hint_for_class(class_name)

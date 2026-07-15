@@ -170,6 +170,56 @@ def list_asset_classes():
         ]
 
 
+def list_asset_classes_grouped():
+    """
+    Return an OrderedDict mapping capability group name to a sorted list of
+    instantiable ESDL asset class names.
+
+    Groups follow the ESDL capability hierarchy:
+      Consumer, Producer, Storage, Conversion, Transport, Other.
+    """
+    from collections import OrderedDict
+
+    try:
+        from esdl import esdl
+
+        groups = OrderedDict([
+            ("Consumer", []),
+            ("Producer", []),
+            ("Storage", []),
+            ("Conversion", []),
+            ("Transport", []),
+            ("Other", []),
+        ])
+        cap_bases = [
+            ("Consumer", getattr(esdl, "Consumer", None)),
+            ("Producer", getattr(esdl, "Producer", None)),
+            ("Storage", getattr(esdl, "Storage", None)),
+            ("Conversion", getattr(esdl, "Conversion", None)),
+            ("Transport", getattr(esdl, "Transport", None)),
+        ]
+        base = esdl.Asset
+        for name in sorted(dir(esdl)):
+            cls = getattr(esdl, name, None)
+            if not (
+                isinstance(cls, type)
+                and issubclass(cls, base)
+                and cls is not base
+            ):
+                continue
+            placed = False
+            for group_name, group_base in cap_bases:
+                if group_base is not None and issubclass(cls, group_base):
+                    groups[group_name].append(name)
+                    placed = True
+                    break
+            if not placed:
+                groups["Other"].append(name)
+        return OrderedDict((k, v) for k, v in groups.items() if v)
+    except Exception:
+        return {"All": list_asset_classes()}
+
+
 # ---------------------------------------------------------------------------
 # Geometry type hints
 # ---------------------------------------------------------------------------
