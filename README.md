@@ -42,7 +42,7 @@ New-Item -ItemType SymbolicLink -Path "$qgisPlugins\ESDL-QGIS-Plugin" -Target "C
     - QGIS native topology tools (Settings → Snapping → Topological editing) only work within the same layer, not across layers.
     - The implementation of live update of connection line is doable, but can be expensive.
     - Possible workaround is to have a Connection refresh btn to update the visualization of connection line.
-- [] Add hierarchy to asset options
+- [v] Add hierarchy to asset options
   - either grouped by asset capability or recent / generic
   - [] Return empty list in fallback at list_asset_classes() in esdl_model.py
 - [v] Check if attribue options support getting ENUM values
@@ -72,12 +72,19 @@ New-Item -ItemType SymbolicLink -Path "$qgisPlugins\ESDL-QGIS-Plugin" -Target "C
 - [ ] Fully architecture cleanup
   - Assess the current implementation and components, reorganize codebase based for modularity design.
 
-- [ ] How the whole plugin is ESDL model compatible? If ESDL model change, will thing work properly after dependency update?
+- [ ] How the whole plugin is ESDL model compatible? If ESDL model change, will thing work properly after dependency update?. Make sure to document well the custom part
 
 Bug
 
 - [ ] selector buffer, sometimes not very precise (e.g. clicking on port, but a pipe is selected)
 - [ ] Cancel Add/Edit/Delete action is not straightforward (cursor remains a + sign)
+- [ ] Handling QGIS crash
+- [ ] Handle editing in projected CRS
+
+2026-07-16
+- [ ] Connecting line (pipe) asset on edge instead of centroid 
+- [ ] Add Test
+
 
 TBD:
 
