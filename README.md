@@ -55,6 +55,14 @@ Recommended: use `pip >= 26.2.2` ([security advisory](https://discuss.python.org
 
 Restart QGIS afterwards and enable the plugin via **Plugins → Manage and Install Plugins**.
 
+## Tutorials
+
+TODO
+
+## Contributions
+
+TODO
+
 ## License
 
 [MIT](LICENSE)
