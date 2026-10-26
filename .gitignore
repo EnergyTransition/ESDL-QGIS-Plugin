@@ -1,1 +1,6 @@
 .venv
+
+/%LOCALAPPDATA%
+
+**/__pycache__/
+**/*.pyc
