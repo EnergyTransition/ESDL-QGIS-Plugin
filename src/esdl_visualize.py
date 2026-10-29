@@ -1,12 +1,10 @@
 """
 Converts a pyESDL EnergySystem into QGIS in-memory vector layers and
 provides sync-back so edits can be serialised back to an .esdl file.
-
-Geometry is detected by duck-typing on the pyESDL object (avoids import
-conflicts with the local src/esdl.py placeholder file).
 """
 
 from qgis.core import (
+    Qgis,
     QgsVectorLayer,
     QgsFeature,
     QgsGeometry,
@@ -21,11 +19,15 @@ from qgis.core import (
     QgsSimpleMarkerSymbolLayer,
     QgsRasterMarkerSymbolLayer,
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QVariant, Qt
 from pathlib import Path
 
-# Fields that are part of every asset layer but are NOT ESDL EAttributes
-_STANDARD_FIELDS = frozenset({"id", "name", "esdl_class", "area_name"})
+from .esdl_ecore import coerce_attr_value, describe_asset_attributes, set_esdl_attr
+from .esdl_model import iter_port_connections
+
+# Fields that are part of every QGIS asset layer but are NOT necessarily ESDL EAttributes.
+_STANDARD_FIELD_NAMES = ("id", "name", "esdl_class", "area_name")
+_STANDARD_FIELDS = frozenset(_STANDARD_FIELD_NAMES)
 
 # Directory that holds optional per-class PNG icons (e.g. HeatingDemand.png).
 # Icons are local-only for now; fetching them from an online repository is not implemented yet.
@@ -57,27 +59,19 @@ def _apply_directional_symbol(layer) -> None:
     direction (A → B) is visible on the map.  The arrow inherits the colour
     of the base line symbol and rotates automatically along the line bearing.
     """
-    try:
-        from qgis.core import QgsSimpleMarkerSymbolLayerBase
-
-        shape = QgsSimpleMarkerSymbolLayerBase.ArrowHead
-    except Exception:
-        shape = None
-
     arrow = QgsSimpleMarkerSymbolLayer()
-    if shape is not None:
-        arrow.setShape(shape)
+    arrow.setShape(Qgis.MarkerShape.ArrowHeadFilled)
     arrow.setSize(3.5)
     # Inherit the colour from the existing base line symbol
     base_color = layer.renderer().symbol().color()
     arrow.setColor(base_color)
-    arrow.setStrokeStyle(0)  # no border on arrowhead fill
+    arrow.setStrokeStyle(Qt.PenStyle.NoPen)  # no border on arrowhead fill
 
     marker_sym = QgsMarkerSymbol()
     marker_sym.changeSymbolLayer(0, arrow)
 
     marker_line = QgsMarkerLineSymbolLayer()
-    marker_line.setPlacement(QgsMarkerLineSymbolLayer.CentralPoint)
+    marker_line.setPlacement(Qgis.MarkerLinePlacement.CentralPoint)
     marker_line.setSubSymbol(marker_sym)
 
     layer.renderer().symbol().appendSymbolLayer(marker_line)
@@ -88,84 +82,31 @@ def _apply_directional_symbol(layer) -> None:
 # ---------------------------------------------------------------------------
 
 
-# TODO: review
 def _get_esdl_attr_fields(asset):
     """
-    Use pyecore meta-model introspection to discover all primitive EAttribute
-    fields of the given asset class, excluding the standard layer fields.
+    Build QGIS field descriptors from the asset's ESDL EAttributes
+    (discovered via esdl_ecore.describe_asset_attributes), excluding the
+    standard layer fields.
 
     Returns list of (field_name, QVariant_type, default, enum_options_or_None).
     enum_options_or_None is a list of string literal names for EEnum fields,
     or None for plain scalar fields.
     """
-    try:
-        from pyecore.ecore import EAttribute as _EAttribute, EEnum as _EEnum
-    except ImportError:
-        return []
-
     result = []
-    seen = set()
-    for feature in type(asset).eClass.eAllStructuralFeatures():
-        name = feature.name
-        if name in _STANDARD_FIELDS or name in seen:
-            continue
-        if not isinstance(feature, _EAttribute):
-            continue  # skip EReference — those are links to other objects
-        if getattr(feature, "derived", False):
-            continue  # skip computed/derived attributes
-        seen.add(name)
-
-        val = getattr(asset, name, None)
-
-        # Enum field — collect literal names; stored as String in QGIS layer
-        try:
-            etype = getattr(feature, "eType", None)
-            is_enum = isinstance(etype, _EEnum)
-        except Exception:
-            is_enum = False
-
-        if is_enum:
-            enum_opts = [lit.name for lit in etype.eLiterals]
-            current = getattr(val, "name", str(val)) if val is not None else ""
-            result.append((name, QVariant.String, current, enum_opts))
-            continue
-
-        # Map Python type to QVariant type; serialise everything else as String
-        enum_opts = None
-        if isinstance(val, bool):
-            qtype, display = QVariant.String, str(val).lower()
-        elif isinstance(val, int):
-            qtype, display = QVariant.Int, val if val is not None else 0
-        elif isinstance(val, float):
-            qtype, display = QVariant.Double, val if val is not None else 0.0
+    for desc in describe_asset_attributes(asset, exclude=_STANDARD_FIELDS):
+        if desc.is_enum:
+            qtype = QVariant.String
+        elif isinstance(desc.value, bool):
+            qtype = QVariant.String
+        elif isinstance(desc.value, int):
+            qtype = QVariant.Int
+        elif isinstance(desc.value, float):
+            qtype = QVariant.Double
         else:
-            qtype, display = QVariant.String, str(val) if val is not None else ""
-        result.append((name, qtype, display, enum_opts))
+            qtype = QVariant.String
+        default = coerce_attr_value(desc.value, desc.is_enum)
+        result.append((desc.name, qtype, default, desc.enum_options))
     return result
-
-
-# TODO: _set_esdl_ref() --> check ME code as well
-def _set_esdl_attr(asset, name: str, raw_value):
-    """
-    Write a QGIS feature value back to a pyESDL asset attribute.
-    Handles type coercion and enum lookup; silently skips on error.
-    """
-    current = getattr(asset, name, None)
-    try:
-        if isinstance(current, bool):
-            setattr(asset, name, str(raw_value).lower() == "true")
-        elif isinstance(current, int):
-            setattr(asset, name, int(raw_value))
-        elif isinstance(current, float):
-            setattr(asset, name, float(raw_value))
-        elif current is not None and not isinstance(current, str):
-            # Likely an Enum — look up by name string
-            enum_cls = type(current)
-            setattr(asset, name, enum_cls.from_string(str(raw_value)))
-        else:
-            setattr(asset, name, str(raw_value) if raw_value is not None else None)
-    except Exception:
-        pass  # non-critical; leave the original value unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +170,7 @@ def _geom_to_qgspoint(geometry) -> "QgsPointXY | None":
 
 def _geom_endpoint(geometry, use_last: bool = False):
     """
-    Return (lon, lat) for a connection endpoint on a pyESDL geometry,
-    following the Geodan esdl_qgis_plugin convention:
+    Return (lon, lat) for a connection endpoint on a pyESDL geometry:
     - Point  : lon/lat directly.
     - Line   : first point when use_last=False, last point when use_last=True.
     - Polygon: first exterior point.
@@ -330,76 +270,43 @@ def _collect_assets(area, out_by_class: dict, out_areas: list, area_name=""):
 
 def _collect_connections(assets_by_class: dict) -> list:
     """
-    Walk every InPort across all loaded assets, following the Geodan
-    esdl_qgis_plugin approach (github.com/Geodan/esdl_qgis_plugin).
+    Build QGIS-ready connection records — with geometry endpoints attached —
+    from every InPort -> OutPort link discovered by
+    esdl_model.iter_port_connections().
 
     Returns a list of dicts with keys:
         in_port_id, in_asset_id, out_port_id, out_asset_id,
         from_lon, from_lat, to_lon, to_lat
 
-    Endpoint selection (Geodan convention):
+    Endpoint selection convention:
     - InPort's asset  (from side): first point for Line, lon/lat for Point.
     - OutPort's asset (to side):   last  point for Line, lon/lat for Point.
     In properly-constructed ESDLs pipe endpoints coincide with connected
     asset positions, so connection lines are near-zero-length dashes that
     record topology without adding visual clutter.
     """
-    seen = set()
     result = []
-    for entries in assets_by_class.values():
-        for e in entries:
-            asset = e["asset"]
-            try:
-                ports = asset.port
-            except Exception:
-                continue
-            for port in ports:
-                if type(port).__name__ != "InPort":
-                    continue
-                try:
-                    connected = port.connectedTo
-                except Exception:
-                    continue
-                # connectedTo is an EOrderedSet (iterable) or single ref
-                targets = (
-                    list(connected)
-                    if hasattr(connected, "__iter__")
-                    else ([connected] if connected is not None else [])
-                )
-                for out_port in targets:
-                    key = (
-                        getattr(port, "id", id(port)),
-                        getattr(out_port, "id", id(out_port)),
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    try:
-                        out_asset = out_port.eContainer()
-                    except Exception:
-                        out_asset = None
-                    if out_asset is None:
-                        continue
-                    from_lon, from_lat = _geom_endpoint(
-                        getattr(asset, "geometry", None), use_last=False
-                    )
-                    to_lon, to_lat = _geom_endpoint(
-                        getattr(out_asset, "geometry", None), use_last=True
-                    )
-                    if None in (from_lon, from_lat, to_lon, to_lat):
-                        continue
-                    result.append(
-                        {
-                            "in_port_id": getattr(port, "id", ""),
-                            "in_asset_id": getattr(asset, "id", ""),
-                            "out_port_id": getattr(out_port, "id", ""),
-                            "out_asset_id": getattr(out_asset, "id", ""),
-                            "from_lon": from_lon,
-                            "from_lat": from_lat,
-                            "to_lon": to_lon,
-                            "to_lat": to_lat,
-                        }
-                    )
+    for in_port, in_asset, out_port, out_asset in iter_port_connections(assets_by_class):
+        from_lon, from_lat = _geom_endpoint(
+            getattr(in_asset, "geometry", None), use_last=False
+        )
+        to_lon, to_lat = _geom_endpoint(
+            getattr(out_asset, "geometry", None), use_last=True
+        )
+        if None in (from_lon, from_lat, to_lon, to_lat):
+            continue
+        result.append(
+            {
+                "in_port_id": getattr(in_port, "id", ""),
+                "in_asset_id": getattr(in_asset, "id", ""),
+                "out_port_id": getattr(out_port, "id", ""),
+                "out_asset_id": getattr(out_asset, "id", ""),
+                "from_lon": from_lon,
+                "from_lat": from_lat,
+                "to_lon": to_lon,
+                "to_lat": to_lat,
+            }
+        )
     return result
 
 
@@ -488,12 +395,7 @@ class ESDLVisualizer:
         pr = layer.dataProvider()
 
         # Standard fields (always present)
-        standard = [
-            QgsField("id", QVariant.String),
-            QgsField("name", QVariant.String),
-            QgsField("esdl_class", QVariant.String),
-            QgsField("area_name", QVariant.String),
-        ]
+        standard = [QgsField(name, QVariant.String) for name in _STANDARD_FIELD_NAMES]
         pr.addAttributes(standard)
 
         # Extra ESDL EAttribute fields — introspected from the first asset
@@ -576,6 +478,52 @@ class ESDLVisualizer:
 
         pr.addFeatures(features)
         layer.updateExtents()
+        return layer
+
+    def _build_connections_layer(self, conn_list: list):
+        """
+        Build a dashed-grey LineString memory layer from _collect_connections
+        output.
+        """
+        layer = QgsVectorLayer("LineString?crs=EPSG:4326", "Connections", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes(
+            [
+                QgsField("in_port_id", QVariant.String),
+                QgsField("in_asset_id", QVariant.String),
+                QgsField("out_port_id", QVariant.String),
+                QgsField("out_asset_id", QVariant.String),
+            ]
+        )
+        layer.updateFields()
+
+        features = []
+        for c in conn_list:
+            f = QgsFeature(layer.fields())
+            f.setGeometry(
+                QgsGeometry.fromPolylineXY(
+                    [
+                        QgsPointXY(c["from_lon"], c["from_lat"]),
+                        QgsPointXY(c["to_lon"], c["to_lat"]),
+                    ]
+                )
+            )
+            f.setAttributes(
+                [
+                    c["in_port_id"],
+                    c["in_asset_id"],
+                    c["out_port_id"],
+                    c["out_asset_id"],
+                ]
+            )
+            features.append(f)
+
+        if not features:
+            return None
+        pr.addFeatures(features)
+        layer.updateExtents()
+        symbol = QgsLineSymbol.createSimple({"line_style": "dash", "color": "grey"})
+        layer.renderer().setSymbol(symbol)
         return layer
 
     # ------------------------------------------------------------------
@@ -727,54 +675,6 @@ class ESDLVisualizer:
         layer.triggerRepaint()
 
     # ------------------------------------------------------------------
-
-    def _build_connections_layer(self, conn_list: list):
-        """
-        Build a dashed-grey LineString memory layer from _collect_connections
-        output, following the Geodan esdl_qgis_plugin style.
-        """
-        layer = QgsVectorLayer("LineString?crs=EPSG:4326", "Connections", "memory")
-        pr = layer.dataProvider()
-        pr.addAttributes(
-            [
-                QgsField("in_port_id", QVariant.String),
-                QgsField("in_asset_id", QVariant.String),
-                QgsField("out_port_id", QVariant.String),
-                QgsField("out_asset_id", QVariant.String),
-            ]
-        )
-        layer.updateFields()
-
-        features = []
-        for c in conn_list:
-            f = QgsFeature(layer.fields())
-            f.setGeometry(
-                QgsGeometry.fromPolylineXY(
-                    [
-                        QgsPointXY(c["from_lon"], c["from_lat"]),
-                        QgsPointXY(c["to_lon"], c["to_lat"]),
-                    ]
-                )
-            )
-            f.setAttributes(
-                [
-                    c["in_port_id"],
-                    c["in_asset_id"],
-                    c["out_port_id"],
-                    c["out_asset_id"],
-                ]
-            )
-            features.append(f)
-
-        if not features:
-            return None
-        pr.addFeatures(features)
-        layer.updateExtents()
-        symbol = QgsLineSymbol.createSimple({"line_style": "dash", "color": "grey"})
-        layer.renderer().setSymbol(symbol)
-        return layer
-
-    # ------------------------------------------------------------------
     # Sync edits back into ESDL
     # ------------------------------------------------------------------
 
@@ -810,7 +710,7 @@ class ESDLVisualizer:
                 for field_name in extra:
                     raw = feat[field_name]
                     if raw is not None:
-                        _set_esdl_attr(asset, field_name, raw)
+                        set_esdl_attr(asset, field_name, raw)
 
     # ------------------------------------------------------------------
     # Serialise
