@@ -36,11 +36,13 @@ def open_esdl_file(parent=None):
         return None
 
 
-def export_esdl_file(parent, esh, energy_system) -> bool:
+def export_esdl_file(parent, esh, energy_system):
     """
     Show a native save-picker and write *esh*'s current state to a .esdl file.
 
-    Returns True if saved, False if the user cancelled or the save failed.
+    Returns the saved file path (str) on success, None if the user
+    cancelled, or False if writing failed (a critical dialog is also shown
+    to the user in that case).
     """
     default_name = (energy_system.name or "energy_system").replace(" ", "_") + ".esdl"
     path, _ = QFileDialog.getSaveFileName(
@@ -50,13 +52,13 @@ def export_esdl_file(parent, esh, energy_system) -> bool:
         "ESDL files (*.esdl);;XML files (*.xml)",
     )
     if not path:
-        return False
+        return None
 
     try:
         xml = esh.to_string()
         with open(path, "w", encoding="utf-8") as f:
             f.write(xml)
-        return True
+        return path
     except Exception as exc:
         QMessageBox.critical(parent, "Failed to export ESDL", str(exc))
         return False

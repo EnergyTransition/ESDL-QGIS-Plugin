@@ -2,6 +2,8 @@
 Minimal QGIS dock panel shown after an ESDL file is loaded.
 """
 
+from datetime import datetime
+
 from qgis.PyQt.QtWidgets import (
     QDockWidget,
     QWidget,
@@ -9,6 +11,7 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QTextEdit,
     QMessageBox,
 )
 
@@ -59,7 +62,13 @@ class ESDLDock(QDockWidget):
         self._export_btn.clicked.connect(self._on_export)
         layout.addWidget(self._export_btn)
 
-        layout.addStretch()
+        layout.addSpacing(8)
+
+        layout.addWidget(QLabel("Action log"))
+        self._log = QTextEdit()
+        self._log.setReadOnly(True)
+        layout.addWidget(self._log)
+
         self.setWidget(inner)
 
     def set_add_asset_callback(self, fn):
@@ -89,6 +98,11 @@ class ESDLDock(QDockWidget):
     def _on_export(self):
         if callable(self._export_callback):
             self._export_callback()
+
+    def append_change(self, msg: str):
+        """Append a timestamped entry to the action log."""
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._log.append(f"[{ts}]  {msg}")
 
     def closeEvent(self, event):
         """Closing this dock also closes the loaded ESDL — confirm first."""

@@ -32,6 +32,7 @@ class ESDLPlugin:
         self.visualizer = None
         self._dock = None
         self._active_map_tool = None
+        self._logged_layer_ids = set()
 
     def initGui(self):
         # Create an action (i.e. a button) with Logo
@@ -89,6 +90,7 @@ class ESDLPlugin:
         self.esh = None
         self.energy_system = None
         self._active_map_tool = None
+        self._logged_layer_ids.clear()
 
     def _load_new(self):
         dlg = ESDLIntroDialog(parent=self.iface.mainWindow())
@@ -113,6 +115,9 @@ class ESDLPlugin:
         self._dock.set_close_callback(self._on_dock_closed)
         self.iface.addDockWidget(Qt.RightDockWidgetArea, self._dock)
 
+        for layer in layers:
+            self._connect_layer_log_signals(layer)
+
         self.iface.messageBar().pushMessage(
             "ESDL",
             f"'{energy_system.name}' loaded \u2014 {len(layers)} layer(s) added.",
@@ -128,11 +133,48 @@ class ESDLPlugin:
         self.esh = None
         self.energy_system = None
         self._active_map_tool = None
+        self._logged_layer_ids.clear()
 
     def _export(self):
         if self.visualizer is not None:
             self.visualizer.sync_from_layers()
-        export_esdl_file(self.iface.mainWindow(), self.esh, self.energy_system)
+        result = export_esdl_file(self.iface.mainWindow(), self.esh, self.energy_system)
+        if result is False:
+            self._log_change("Export failed.")
+        elif result:
+            self._log_change(f"Exported to {result}")
+        return bool(result)
+
+    # ------------------------------------------------------------------
+    # Action log
+    # ------------------------------------------------------------------
+
+    def _log_change(self, msg: str):
+        """Append *msg* to the dock's action log, if the dock is open."""
+        if self._dock is not None:
+            self._dock.append_change(msg)
+
+    def _connect_layer_log_signals(self, layer):
+        """
+        Hook a layer's attribute/geometry edit signals so direct QGIS
+        feature-table edits are recorded in the dock's action log.
+        Idempotent: a layer that is already connected is skipped, so this
+        is safe to call again for layers created after the initial load
+        (e.g. the first asset of a newly-added class).
+        """
+        if layer is None or layer.id() in self._logged_layer_ids:
+            return
+        self._logged_layer_ids.add(layer.id())
+        layer.attributeValueChanged.connect(
+            lambda fid, idx, val, l=layer: self._log_change(
+                f"[{l.name()}] feature {fid}: '{l.fields()[idx].name()}' \u2192 {val!r}"
+            )
+        )
+        layer.geometryChanged.connect(
+            lambda fid, geom, l=layer: self._log_change(
+                f"[{l.name()}] feature {fid}: geometry moved"
+            )
+        )
 
     # ------------------------------------------------------------------
     # Add-asset flow
@@ -191,13 +233,10 @@ class ESDLPlugin:
         esdl_model.add_default_ports(asset)
         area = self.energy_system.instance[0].area
         esdl_model.attach_to_area(asset, area)
-        self.visualizer.add_asset_to_layer(asset, area.name or "")
+        layer = self.visualizer.add_asset_to_layer(asset, area.name or "")
+        self._connect_layer_log_signals(layer)
 
-        self.iface.messageBar().pushMessage(
-            "ESDL",
-            f"Added {pick['class_name']} '{pick['name']}'.",
-            level=0,
-        )
+        self._log_change(f"Added {pick['class_name']} '{pick['name']}'")
 
     # ------------------------------------------------------------------
     # Delete-asset flow
@@ -238,8 +277,4 @@ class ESDLPlugin:
             else:
                 container.eSet(feature, None)
         self.visualizer.refresh_layers()
-        self.iface.messageBar().pushMessage(
-            "ESDL",
-            f"Deleted {type(asset).__name__} '{asset_name}'.",
-            level=0,
-        )
+        self._log_change(f"Deleted {type(asset).__name__} '{asset_name}'")
