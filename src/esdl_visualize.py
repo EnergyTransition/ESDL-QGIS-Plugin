@@ -18,8 +18,12 @@ from qgis.core import (
     QgsMarkerLineSymbolLayer,
     QgsSimpleMarkerSymbolLayer,
     QgsRasterMarkerSymbolLayer,
+    QgsPalLayerSettings,
+    QgsTextFormat,
+    QgsVectorLayerSimpleLabeling,
 )
 from qgis.PyQt.QtCore import QVariant, Qt
+from qgis.PyQt.QtGui import QColor, QFont
 from pathlib import Path
 
 from .esdl_ecore import coerce_attr_value, describe_asset_attributes, set_esdl_attr
@@ -33,24 +37,124 @@ _STANDARD_FIELDS = frozenset(_STANDARD_FIELD_NAMES)
 # Icons are local-only for now; fetching them from an online repository is not implemented yet.
 _ICONS_DIR = Path(__file__).parent / "icons"
 
+# Capability base-class names (from the ESDL meta-model) mapped to the fill
+# colour used for the circle background.
+_CAPABILITY_COLORS = {
+    "Consumer": "#649dc9",  # hsl(206, 48%, 59%)
+    "Producer": "#92a800",  # hsl(68, 100%, 33%)
+    "Storage": "#cd1326",  # hsl(354, 83%, 44%)
+    "Transport": "#ffcc00",  # hsl(48, 100%, 50%)
+    "Conversion": "#b573ba",  # hsl(296, 34%, 59%)
+}
 
-def _apply_point_icon(layer, class_name: str) -> None:
+# Circle fill colour used as exception.
+_UNKNOWN_CAPABILITY_COLOR = "lightgray"
+
+_CIRCLE_SIZE = 8.0
+_ICON_SIZE = 5.0
+
+# Exception for applying circle background
+_ICON_HAS_OWN_BACKGROUND = {"Joint"}
+_SMALL_ICON_SIZE = 2.0
+
+# Font size (mm) for the capital-letter abbreviation.
+_LABEL_FONT_SIZE = 3.0
+
+
+def _class_abbreviation(class_name: str) -> str:
     """
-    If src/icons/{class_name}.png exists, replace the layer's default marker
-    with a raster icon of that file.  Falls back silently to the QGIS default
-    marker when no matching icon is found.
+    Short abbreviation built from the capital letters in *class_name*, used
+    as a fallback label when no PNG icon exists for the class, e.g. PowerToX -> PTX.
     """
-    icon_path = _ICONS_DIR / f"{class_name}.png"
-    if not icon_path.exists():
-        return
+    letters = "".join(ch for ch in class_name if ch.isupper())
+    return letters or class_name[:3].upper()
+
+
+def _apply_abbreviation_label(layer, class_name: str) -> None:
+    """
+    Show *class_name*'s capital-letter abbreviation centred on every point feature. 
+    Used in place of a PNG icon when none is available. Silently does
+    nothing if labelling can't be configured (e.g. API differences across
+    QGIS versions).
+    """
     try:
-        raster = QgsRasterMarkerSymbolLayer(str(icon_path))
-        raster.setSize(8.0)
+        text = _class_abbreviation(class_name)
+
+        settings = QgsPalLayerSettings()
+        settings.fieldName = f"'{text}'"
+        settings.isExpression = True
+        settings.placement = Qgis.LabelPlacement.OverPoint
+
+        font = QFont("Arial")
+
+        text_format = QgsTextFormat()
+        text_format.setFont(font)
+        text_format.setSizeUnit(Qgis.RenderUnit.Millimeters)
+        text_format.setSize(_LABEL_FONT_SIZE)
+        text_format.setColor(QColor("black"))
+
+        settings.setFormat(text_format)
+        layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+        layer.setLabelsEnabled(True)
+    except Exception:
+        pass  # leave layer without a text label
+
+
+def _get_asset_capability(asset) -> "str | None":
+    """
+    Return the ESDL capability name (Producer, Consumer, Storage, Transport,
+    or Conversion) for *asset* by walking its class hierarchy.
+    Returns None if no capability base class is found.
+    """
+    if asset is None:
+        return None
+    class_names = {klass.__name__ for klass in type(asset).__mro__}
+    for capability in _CAPABILITY_COLORS:
+        if capability in class_names:
+            return capability
+    return None
+
+
+def _apply_point_icon(layer, class_name: str, asset=None) -> None:
+    """
+    Build a MapEditor-style point symbol: a circle filled with the colour of
+    the asset's ESDL capability (Producer/Conversion/Transport/Consumer/
+    Storage). The class's PNG icon (src/icons/{class_name}.png) is layered on
+    top when available; otherwise the class's capital-letter abbreviation is shown 
+    as a text label instead. Falls back to an uncoloured circle when the
+    capability can't be determined.
+    """
+    capability_color = _CAPABILITY_COLORS.get(_get_asset_capability(asset))
+    icon_path = _ICONS_DIR / f"{class_name}.png"
+    has_icon = icon_path.exists()
+
+    try:
         sym = QgsMarkerSymbol()
-        sym.changeSymbolLayer(0, raster)
+
+        if has_icon and class_name in _ICON_HAS_OWN_BACKGROUND:
+            raster = QgsRasterMarkerSymbolLayer(str(icon_path))
+            raster.setSize(_SMALL_ICON_SIZE)
+            sym.changeSymbolLayer(0, raster)
+        else:
+            circle = QgsSimpleMarkerSymbolLayer()
+            circle.setShape(Qgis.MarkerShape.Circle)
+            circle.setSize(_CIRCLE_SIZE)
+            circle.setColor(QColor(capability_color or _UNKNOWN_CAPABILITY_COLOR))
+            circle.setStrokeColor(QColor("black"))
+            circle.setStrokeWidth(0.2)
+            sym.changeSymbolLayer(0, circle)
+
+            if has_icon:
+                raster = QgsRasterMarkerSymbolLayer(str(icon_path))
+                raster.setSize(_ICON_SIZE)
+                sym.appendSymbolLayer(raster)
+
         layer.renderer().setSymbol(sym)
     except Exception:
         pass  # leave default symbol intact
+
+    if not has_icon:
+        _apply_abbreviation_label(layer, class_name)
 
 
 def _apply_directional_symbol(layer) -> None:
@@ -406,7 +510,7 @@ class ESDLVisualizer:
 
         # Custom icon for point layers; directional arrow for line layers
         if geom_type_str == "Point":
-            _apply_point_icon(layer, class_name)
+            _apply_point_icon(layer, class_name, entries[0]["asset"])
         elif geom_type_str == "LineString":
             _apply_directional_symbol(layer)
 
