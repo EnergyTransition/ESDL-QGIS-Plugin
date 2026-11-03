@@ -33,6 +33,10 @@ from .esdl_model import iter_port_connections
 _STANDARD_FIELD_NAMES = ("id", "name", "esdl_class", "area_name")
 _STANDARD_FIELDS = frozenset(_STANDARD_FIELD_NAMES)
 
+# ---------------------------------------------------------------------------
+#### Config ####
+# ---------------------------------------------------------------------------
+
 # Directory that holds optional per-class PNG icons (e.g. HeatingDemand.png).
 # Icons are local-only for now; fetching them from an online repository is not implemented yet.
 _ICONS_DIR = Path(__file__).parent / "icons"
@@ -47,18 +51,27 @@ _CAPABILITY_COLORS = {
     "Conversion": "#b573ba",  # hsl(296, 34%, 59%)
 }
 
-# Circle fill colour used as exception.
+# Circle fill colour used as exception when capability can't be determined.
 _UNKNOWN_CAPABILITY_COLOR = "lightgray"
 
+# Marker sizes (mm) for the capability circle and its overlaid PNG icon.
 _CIRCLE_SIZE = 8.0
 _ICON_SIZE = 5.0
 
-# Exception for applying circle background
+# Do not apply circular background for Joint asset.
 _ICON_HAS_OWN_BACKGROUND = {"Joint"}
 _SMALL_ICON_SIZE = 2.0
 
 # Font size (mm) for the capital-letter abbreviation.
 _LABEL_FONT_SIZE = 3.0
+
+# Default line colours for specific transport asset classes;
+_LINE_COLORS = {
+    "ElectricityCable": "#ff9090",
+    "Pipe": "#3B47E3",
+}
+
+# ---------------------------------------------------------------------------
 
 
 def _class_abbreviation(class_name: str) -> str:
@@ -155,6 +168,21 @@ def _apply_point_icon(layer, class_name: str, asset=None) -> None:
 
     if not has_icon:
         _apply_abbreviation_label(layer, class_name)
+
+
+def _apply_line_color(layer, class_name: str) -> None:
+    """
+    Set *layer*'s line symbol colour to the value in _LINE_COLORS for
+    *class_name*, if one is defined. Leaves the QGIS-assigned default colour
+    untouched for classes not in that mapping.
+    """
+    color = _LINE_COLORS.get(class_name)
+    if color is None:
+        return
+    try:
+        layer.renderer().symbol().setColor(QColor(color))
+    except Exception:
+        pass  # leave default symbol colour intact
 
 
 def _apply_directional_symbol(layer) -> None:
@@ -512,6 +540,7 @@ class ESDLVisualizer:
         if geom_type_str == "Point":
             _apply_point_icon(layer, class_name, entries[0]["asset"])
         elif geom_type_str == "LineString":
+            _apply_line_color(layer, class_name)
             _apply_directional_symbol(layer)
 
         # Make id and esdl_class read-only in the attribute form
