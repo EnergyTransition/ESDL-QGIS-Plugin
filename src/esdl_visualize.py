@@ -690,11 +690,14 @@ class ESDLVisualizer:
                 return feat["id"]
         return None
 
-    def add_asset_to_layer(self, asset, area_name: str = "") -> None:
+    def add_asset_to_layer(self, asset, area_name: str = ""):
         """
         Register a newly created pyESDL *asset* in *self._asset_by_id* and
         add its QgsFeature to the appropriate layer.  If no layer exists yet
         for this asset class, one is created and added to the layer group.
+
+        Returns the QgsVectorLayer the asset was added to (whether reused or
+        newly created), or None if the asset's geometry could not be added.
         """
         class_name = type(asset).__name__
         self._asset_by_id[asset.id] = asset
@@ -703,7 +706,7 @@ class ESDLVisualizer:
             layer = self._layers[class_name]
             geom = _to_qgs_geom(asset.geometry)
             if geom is None:
-                return
+                return None
             extra_names = self._extra_fields.get(class_name, [])
             extra_vals = []
             for name in extra_names:
@@ -722,13 +725,14 @@ class ESDLVisualizer:
             layer.dataProvider().addFeatures([f])
             layer.updateExtents()
             layer.triggerRepaint()
+            return layer
         else:
             # First asset of this class — build a full layer from scratch
             layer = self._build_asset_layer(
                 class_name, [{"asset": asset, "area_name": area_name}]
             )
             if layer is None:
-                return
+                return None
             self._layers[class_name] = layer
             root = QgsProject.instance().layerTreeRoot()
             group_name = self._es.name or "ESDL"
@@ -746,6 +750,7 @@ class ESDLVisualizer:
             else:
                 root.addLayer(layer)
             layer.triggerRepaint()
+            return layer
 
     def add_connection_to_layer(self, out_asset, in_asset) -> None:
         """
