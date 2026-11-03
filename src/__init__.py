@@ -1,14 +1,22 @@
 import os
 from pathlib import Path
 
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.PyQt.QtWidgets import QAction, QDialog, QMessageBox
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 
+from . import esdl_model
 from .esdl_io import export_esdl_file
-from .esdl_visualize import ESDLVisualizer
+from .esdl_visualize import ESDLVisualizer, qgs_geom_to_esdl
+from .ui.add_asset_dialog import AddAttributesDialog, PickAssetDialog
 from .ui.dock import ESDLDock
 from .ui.intro_dialog import ESDLIntroDialog
+from .ui.map_tools import (
+    AssetPickerMapTool,
+    LineCaptureMapTool,
+    PointCaptureMapTool,
+    PolygonCaptureMapTool,
+)
 
 
 def classFactory(iface):
@@ -23,6 +31,7 @@ class ESDLPlugin:
         self.energy_system = None
         self.visualizer = None
         self._dock = None
+        self._active_map_tool = None
 
     def initGui(self):
         # Create an action (i.e. a button) with Logo
@@ -79,6 +88,7 @@ class ESDLPlugin:
             self.visualizer = None
         self.esh = None
         self.energy_system = None
+        self._active_map_tool = None
 
     def _load_new(self):
         dlg = ESDLIntroDialog(parent=self.iface.mainWindow())
@@ -98,6 +108,8 @@ class ESDLPlugin:
             parent=self.iface.mainWindow(),
         )
         self._dock.set_export_callback(self._export)
+        self._dock.set_add_asset_callback(self._start_add_asset)
+        self._dock.set_delete_asset_callback(self._start_delete_asset)
         self._dock.set_close_callback(self._on_dock_closed)
         self.iface.addDockWidget(Qt.RightDockWidgetArea, self._dock)
 
@@ -115,8 +127,119 @@ class ESDLPlugin:
         self._dock = None
         self.esh = None
         self.energy_system = None
+        self._active_map_tool = None
 
     def _export(self):
         if self.visualizer is not None:
             self.visualizer.sync_from_layers()
         export_esdl_file(self.iface.mainWindow(), self.esh, self.energy_system)
+
+    # ------------------------------------------------------------------
+    # Add-asset flow
+    # ------------------------------------------------------------------
+
+    def _start_add_asset(self):
+        """Open the asset-picker dialog, then activate the appropriate map tool."""
+        loaded_classes = sorted(self.visualizer.known_classes())
+        dlg = PickAssetDialog(loaded_classes, parent=self.iface.mainWindow())
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        pick = dlg.get_data()  # {class_name, name, geom_hint}
+
+        canvas = self.iface.mapCanvas()
+        if pick["geom_hint"] == "Line":
+            tool = LineCaptureMapTool(canvas)
+            hint_msg = "Click vertices on the map; right-click to finish."
+        elif pick["geom_hint"] == "Polygon":
+            tool = PolygonCaptureMapTool(canvas)
+            hint_msg = "Click vertices on the map; right-click to finish."
+        else:
+            tool = PointCaptureMapTool(canvas)
+            hint_msg = "Click the map to place the asset."
+
+        tool.geometry_captured.connect(
+            lambda geom: self._on_geometry_captured(geom, pick)
+        )
+        self._active_map_tool = tool  # keep reference to prevent GC
+        canvas.setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            f"Adding {pick['class_name']} \u2014 {hint_msg}",
+            level=0,
+            duration=10,
+        )
+
+    def _on_geometry_captured(self, qgs_geom, pick: dict):
+        """Open the attributes dialog and create the asset in the model."""
+        dlg = AddAttributesDialog(pick["class_name"], parent=self.iface.mainWindow())
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        attrs = dlg.get_attrs()
+
+        esdl_geom = qgs_geom_to_esdl(qgs_geom, pick["geom_hint"])
+        if esdl_geom is None:
+            self.iface.messageBar().pushMessage(
+                "ESDL",
+                "Could not convert geometry \u2014 asset not added.",
+                level=2,
+            )
+            return
+
+        asset = esdl_model.create_asset_with_geom(
+            pick["class_name"], pick["name"], esdl_geom, attrs
+        )
+        esdl_model.add_default_ports(asset)
+        area = self.energy_system.instance[0].area
+        esdl_model.attach_to_area(asset, area)
+        self.visualizer.add_asset_to_layer(asset, area.name or "")
+
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            f"Added {pick['class_name']} '{pick['name']}'.",
+            level=0,
+        )
+
+    # ------------------------------------------------------------------
+    # Delete-asset flow
+    # ------------------------------------------------------------------
+
+    def _start_delete_asset(self):
+        """Activate the single-click map tool for selecting an asset to delete."""
+        tool = AssetPickerMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_delete)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click an asset on the map to delete it.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_delete(self, asset_id: str):
+        """Confirm and delete the selected asset from the model."""
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if asset is None:
+            return
+        asset_name = getattr(asset, "name", None) or asset_id
+        reply = QMessageBox.question(
+            self.iface.mainWindow(),
+            "Delete asset",
+            f"Delete '{asset_name}' ({type(asset).__name__})?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        container = asset.eContainer()
+        feature = asset.eContainmentFeature()
+        if container is not None and feature is not None:
+            if feature.many:
+                container.eGet(feature).remove(asset)
+            else:
+                container.eSet(feature, None)
+        self.visualizer.refresh_layers()
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            f"Deleted {type(asset).__name__} '{asset_name}'.",
+            level=0,
+        )

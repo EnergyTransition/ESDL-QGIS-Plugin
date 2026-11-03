@@ -864,6 +864,9 @@ class ESDLVisualizer:
         Keeps QGIS map features in sync with the in-memory pyESDL model after
         add / delete / attribute-edit operations. Existing layer objects
         (with their styling) are preserved; only the feature data is replaced.
+        An asset-class layer that no longer has any matching assets (e.g.
+        after deleting the last asset of that type) is removed entirely
+        rather than left empty.
         """
         assets_by_class = {}
         area_list = []
@@ -881,48 +884,61 @@ class ESDLVisualizer:
             if getattr(entry["asset"], "id", None)
         }
 
-        # Refresh each asset layer
+        # Refresh each asset layer; collect any class layers that no longer
+        # have matching assets so they can be removed below.
+        emptied_classes = []
         for class_name, layer in self._layers.items():
             if class_name.startswith("_"):
                 continue
+
+            entries = assets_by_class.get(class_name, [])
+            if not entries:
+                emptied_classes.append(class_name)
+                continue
+
             pr = layer.dataProvider()
             pr.deleteFeatures([f.id() for f in layer.getFeatures()])
 
-            entries = assets_by_class.get(class_name, [])
-            if entries:
-                extra_defs = _get_esdl_attr_fields(entries[0]["asset"])
-                features = []
-                for e in entries:
-                    asset = e["asset"]
-                    geom = _to_qgs_geom(asset.geometry)
-                    if geom is None:
-                        continue
-                    extra_vals = []
-                    for name, qtype, *_ in extra_defs:
-                        val = getattr(asset, name, None)
-                        if isinstance(val, bool):
-                            extra_vals.append(str(val).lower())
-                        elif isinstance(val, (int, float)):
-                            extra_vals.append(val if val is not None else 0)
-                        else:
-                            extra_vals.append(str(val) if val is not None else "")
-                    f = QgsFeature(layer.fields())
-                    f.setGeometry(geom)
-                    f.setAttributes(
-                        [
-                            asset.id,
-                            asset.name or "",
-                            class_name,
-                            e["area_name"],
-                            *extra_vals,
-                        ]
-                    )
-                    features.append(f)
-                if features:
-                    pr.addFeatures(features)
+            extra_defs = _get_esdl_attr_fields(entries[0]["asset"])
+            features = []
+            for e in entries:
+                asset = e["asset"]
+                geom = _to_qgs_geom(asset.geometry)
+                if geom is None:
+                    continue
+                extra_vals = []
+                for name, qtype, *_ in extra_defs:
+                    val = getattr(asset, name, None)
+                    if isinstance(val, bool):
+                        extra_vals.append(str(val).lower())
+                    elif isinstance(val, (int, float)):
+                        extra_vals.append(val if val is not None else 0)
+                    else:
+                        extra_vals.append(str(val) if val is not None else "")
+                f = QgsFeature(layer.fields())
+                f.setGeometry(geom)
+                f.setAttributes(
+                    [
+                        asset.id,
+                        asset.name or "",
+                        class_name,
+                        e["area_name"],
+                        *extra_vals,
+                    ]
+                )
+                features.append(f)
+            if features:
+                pr.addFeatures(features)
 
             layer.updateExtents()
             layer.triggerRepaint()
+
+        if emptied_classes:
+            ids = [self._layers[class_name].id() for class_name in emptied_classes]
+            QgsProject.instance().removeMapLayers(ids)
+            for class_name in emptied_classes:
+                del self._layers[class_name]
+                self._extra_fields.pop(class_name, None)
 
         # Refresh connections layer
         if "_connections" in self._layers:
