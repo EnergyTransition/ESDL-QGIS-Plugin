@@ -18,10 +18,11 @@ from qgis.PyQt.QtWidgets import (
 
 class ESDLDock(QDockWidget):
     def __init__(self, energy_system, source_label="", parent=None):
-        super().__init__("ESDL", parent)
+        super().__init__("ESDL QGIS Plugin", parent)
         self.setObjectName("ESDLDock")  # lets QGIS remember dock position
         self._energy_system = energy_system
         self._add_asset_callback = None
+        self._edit_asset_callback = None
         self._delete_asset_callback = None
         self._browse_esdl_callback = None
         self._export_callback = None
@@ -50,6 +51,13 @@ class ESDLDock(QDockWidget):
         self._add_asset_btn.setToolTip("Click the map to place a new ESDL asset")
         self._add_asset_btn.clicked.connect(self._on_add_asset)
         asset_row.addWidget(self._add_asset_btn)
+
+        self._edit_asset_btn = QPushButton("Edit Asset")
+        self._edit_asset_btn.setToolTip(
+            "Click an asset on the map to open it in the ESDL Browser"
+        )
+        self._edit_asset_btn.clicked.connect(self._on_edit_asset)
+        asset_row.addWidget(self._edit_asset_btn)
 
         self._delete_asset_btn = QPushButton("Delete Asset")
         self._delete_asset_btn.setToolTip("Click an asset on the map to delete it")
@@ -85,6 +93,10 @@ class ESDLDock(QDockWidget):
         """Register a callable invoked when the user clicks 'Add Asset'."""
         self._add_asset_callback = fn
 
+    def set_edit_asset_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Edit Asset'."""
+        self._edit_asset_callback = fn
+
     def set_delete_asset_callback(self, fn):
         """Register a callable invoked when the user clicks 'Delete Asset'."""
         self._delete_asset_callback = fn
@@ -104,6 +116,10 @@ class ESDLDock(QDockWidget):
     def _on_add_asset(self):
         if callable(self._add_asset_callback):
             self._add_asset_callback()
+
+    def _on_edit_asset(self):
+        if callable(self._edit_asset_callback):
+            self._edit_asset_callback()
 
     def _on_delete_asset(self):
         if callable(self._delete_asset_callback):
