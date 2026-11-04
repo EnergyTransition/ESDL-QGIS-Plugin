@@ -23,6 +23,7 @@ class ESDLDock(QDockWidget):
         self._energy_system = energy_system
         self._add_asset_callback = None
         self._delete_asset_callback = None
+        self._browse_esdl_callback = None
         self._export_callback = None
         self._close_callback = None
         self._build_ui(source_label)
@@ -58,6 +59,15 @@ class ESDLDock(QDockWidget):
 
         layout.addSpacing(8)
 
+        self._browse_esdl_btn = QPushButton("Browse ESDL")
+        self._browse_esdl_btn.setToolTip(
+            "Inspect and edit ESDL object attributes and references"
+        )
+        self._browse_esdl_btn.clicked.connect(self._on_browse_esdl)
+        layout.addWidget(self._browse_esdl_btn)
+
+        layout.addSpacing(8)
+
         self._export_btn = QPushButton("Export as .esdl file")
         self._export_btn.clicked.connect(self._on_export)
         layout.addWidget(self._export_btn)
@@ -83,6 +93,10 @@ class ESDLDock(QDockWidget):
         """Register a callable invoked when the user clicks 'Export as .esdl file'."""
         self._export_callback = fn
 
+    def set_browse_esdl_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Browse ESDL'."""
+        self._browse_esdl_callback = fn
+
     def set_close_callback(self, fn):
         """Register a callable invoked after the user confirms closing this dock."""
         self._close_callback = fn
@@ -94,6 +108,10 @@ class ESDLDock(QDockWidget):
     def _on_delete_asset(self):
         if callable(self._delete_asset_callback):
             self._delete_asset_callback()
+
+    def _on_browse_esdl(self):
+        if callable(self._browse_esdl_callback):
+            self._browse_esdl_callback()
 
     def _on_export(self):
         if callable(self._export_callback):

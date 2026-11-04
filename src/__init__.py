@@ -10,6 +10,7 @@ from .esdl_io import export_esdl_file
 from .esdl_visualize import ESDLVisualizer, qgs_geom_to_esdl
 from .ui.add_asset_dialog import AddAttributesDialog, PickAssetDialog
 from .ui.dock import ESDLDock
+from .ui.esdl_browser_dialog import EsdlBrowserDialog
 from .ui.intro_dialog import ESDLIntroDialog
 from .ui.map_tools import (
     AssetPickerMapTool,
@@ -112,6 +113,7 @@ class ESDLPlugin:
         self._dock.set_export_callback(self._export)
         self._dock.set_add_asset_callback(self._start_add_asset)
         self._dock.set_delete_asset_callback(self._start_delete_asset)
+        self._dock.set_browse_esdl_callback(self._start_browse_esdl)
         self._dock.set_close_callback(self._on_dock_closed)
         self.iface.addDockWidget(Qt.RightDockWidgetArea, self._dock)
 
@@ -278,3 +280,18 @@ class ESDLPlugin:
                 container.eSet(feature, None)
         self.visualizer.refresh_layers()
         self._log_change(f"Deleted {type(asset).__name__} '{asset_name}'")
+
+    # ------------------------------------------------------------------
+    # Browse-ESDL flow
+    # ------------------------------------------------------------------
+
+    def _start_browse_esdl(self):
+        """Open the ESDL Browser dialog, log user changes, and refresh layers."""
+        dlg = EsdlBrowserDialog(self.energy_system, parent=self.iface.mainWindow())
+        dlg.exec_()
+        # dlg.changes reflects edits already flushed to the model (attribute
+        # edits are flushed on navigation; containment/xref edits apply
+        # immediately) — logged regardless of Accept/Cancel for that reason.
+        for change in dlg.changes:
+            self._log_change(change)
+        self.visualizer.refresh_layers()
