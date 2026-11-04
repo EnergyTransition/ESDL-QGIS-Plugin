@@ -278,19 +278,35 @@ def _to_qgs_geom(geometry):
     return None
 
 
-def _geom_to_qgspoint(geometry) -> "QgsPointXY | None":
+def _closest_endpoint_on_geom(geometry, to_point: "QgsPointXY") -> "QgsPointXY | None":
     """
-    Return a representative QgsPointXY for any pyESDL geometry type.
-    Point  -> the point itself.
-    Line   -> midpoint of the first segment.
-    Polygon/WKT -> centroid of the converted QgsGeometry.
-    Returns None if the geometry cannot be resolved.
+    Return the connection anchor point on *geometry* nearest to *to_point*.
+    Point geometries return themselves. Line geometries only ever snap to
+    one of their two ends (In/Out) \u2014 never a mid-line turn vertex, since a
+    turn isn't a real port location. Polygon/WKT fall back to a single
+    representative point (first exterior vertex / centroid).
     """
-    if geometry is None:
+    if geometry is None or to_point is None:
         return None
     kind = _geom_type_name(geometry)
     if kind == "Point":
         return QgsPointXY(geometry.lon, geometry.lat)
+    if kind == "Line":
+        try:
+            pts = list(geometry.point)
+        except Exception:
+            pts = []
+        if not pts:
+            return None
+        first = QgsPointXY(pts[0].lon, pts[0].lat)
+        last = QgsPointXY(pts[-1].lon, pts[-1].lat)
+        return first if first.distance(to_point) <= last.distance(to_point) else last
+    if kind == "Polygon":
+        try:
+            pt = geometry.exterior.point[0]
+            return QgsPointXY(pt.lon, pt.lat)
+        except Exception:
+            pass
     qgs = _to_qgs_geom(geometry)
     if qgs is None or qgs.isEmpty():
         return None

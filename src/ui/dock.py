@@ -24,6 +24,8 @@ class ESDLDock(QDockWidget):
         self._add_asset_callback = None
         self._edit_asset_callback = None
         self._delete_asset_callback = None
+        self._connect_callback = None
+        self._disconnect_callback = None
         self._browse_esdl_callback = None
         self._export_callback = None
         self._close_callback = None
@@ -67,6 +69,23 @@ class ESDLDock(QDockWidget):
 
         layout.addSpacing(8)
 
+        conn_row = QHBoxLayout()
+        conn_row.setSpacing(4)
+        self._connect_btn = QPushButton("Add Connection")
+        self._connect_btn.setToolTip("Click two assets on the map to wire their ports")
+        self._connect_btn.clicked.connect(self._on_connect)
+        conn_row.addWidget(self._connect_btn)
+
+        self._disconnect_btn = QPushButton("Delete Connection")
+        self._disconnect_btn.setToolTip(
+            "Click an asset on the map to remove one of its connections"
+        )
+        self._disconnect_btn.clicked.connect(self._on_disconnect)
+        conn_row.addWidget(self._disconnect_btn)
+        layout.addLayout(conn_row)
+
+        layout.addSpacing(8)
+
         self._browse_esdl_btn = QPushButton("Browse ESDL")
         self._browse_esdl_btn.setToolTip(
             "Inspect and edit ESDL object attributes and references"
@@ -101,6 +120,14 @@ class ESDLDock(QDockWidget):
         """Register a callable invoked when the user clicks 'Delete Asset'."""
         self._delete_asset_callback = fn
 
+    def set_connect_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Add Connection'."""
+        self._connect_callback = fn
+
+    def set_disconnect_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Delete Connection'."""
+        self._disconnect_callback = fn
+
     def set_export_callback(self, fn):
         """Register a callable invoked when the user clicks 'Export as .esdl file'."""
         self._export_callback = fn
@@ -124,6 +151,14 @@ class ESDLDock(QDockWidget):
     def _on_delete_asset(self):
         if callable(self._delete_asset_callback):
             self._delete_asset_callback()
+
+    def _on_connect(self):
+        if callable(self._connect_callback):
+            self._connect_callback()
+
+    def _on_disconnect(self):
+        if callable(self._disconnect_callback):
+            self._disconnect_callback()
 
     def _on_browse_esdl(self):
         if callable(self._browse_esdl_callback):

@@ -7,6 +7,11 @@ class-discovery helpers used by the Add Asset flow.
 """
 
 import uuid
+from collections import OrderedDict
+
+from pyecore.ecore import EReference
+
+from esdl import esdl
 
 
 def iter_port_connections(assets_by_class: dict):
@@ -65,8 +70,6 @@ def make_temp_asset(class_name: str):
     name is known). Returns None if the class cannot be instantiated.
     """
     try:
-        from esdl import esdl
-
         cls = getattr(esdl, class_name)
         return cls()
     except Exception:
@@ -80,8 +83,6 @@ def create_asset_with_geom(class_name: str, name: str, esdl_geom, attrs: dict = 
 
     Returns the new pyESDL asset object.
     """
-    from esdl import esdl
-
     cls = getattr(esdl, class_name)
     asset = cls(id=str(uuid.uuid4()), name=name)
     asset.geometry = esdl_geom
@@ -101,11 +102,7 @@ def add_default_ports(asset):
 
     Returns the list of added ports (may be empty if the asset has no ports).
     """
-    from esdl import esdl
-
     try:
-        from pyecore.ecore import EReference
-
         has_port = any(
             f.name == "port" and isinstance(f, EReference)
             for f in type(asset).eClass.eAllStructuralFeatures()
@@ -137,6 +134,78 @@ def attach_to_area(asset, area):
 
 
 # ---------------------------------------------------------------------------
+# Port connection wiring (Add/Delete Connection flow)
+# ---------------------------------------------------------------------------
+
+
+def get_connectable_ports(asset):
+    """Return *(out_ports, in_ports)* lists extracted from an asset's port collection."""
+    out_ports, in_ports = [], []
+    try:
+        for port in asset.port:
+            if isinstance(port, esdl.OutPort):
+                out_ports.append(port)
+            elif isinstance(port, esdl.InPort):
+                in_ports.append(port)
+    except Exception:
+        pass
+    return out_ports, in_ports
+
+
+def connect_ports(out_port, in_port):
+    """
+    Wire an OutPort to an InPort via the ESDL connectedTo reference.
+    This is the canonical ESDL topology link: Asset\u2192OutPort\u2192InPort\u2190Asset.
+    Port order is always normalised by the caller (ConnectPortsDialog).
+    """
+    out_port.connectedTo.append(in_port)
+
+
+def disconnect_ports(out_port, in_port):
+    """Remove the connectedTo link between *out_port* and *in_port*."""
+    try:
+        out_port.connectedTo.remove(in_port)
+    except Exception:
+        pass
+
+
+def get_asset_connections(asset):
+    """
+    Return a list of *(out_port, in_port, out_asset, in_asset)* tuples for
+    every connection involving *asset* \u2014 both outgoing (asset owns the
+    OutPort) and incoming (asset owns the InPort).
+    """
+    out_ports, in_ports = get_connectable_ports(asset)
+    connections = []
+
+    for out_port in out_ports:
+        try:
+            targets = list(out_port.connectedTo)
+        except Exception:
+            continue
+        for in_port in targets:
+            try:
+                in_asset = in_port.eContainer()
+            except Exception:
+                in_asset = None
+            connections.append((out_port, in_port, asset, in_asset))
+
+    for in_port in in_ports:
+        try:
+            sources = list(in_port.connectedTo)
+        except Exception:
+            continue
+        for out_port in sources:
+            try:
+                out_asset = out_port.eContainer()
+            except Exception:
+                out_asset = None
+            connections.append((out_port, in_port, out_asset, asset))
+
+    return connections
+
+
+# ---------------------------------------------------------------------------
 # Class discovery
 # ---------------------------------------------------------------------------
 
@@ -149,11 +218,7 @@ def list_asset_classes_grouped():
     Groups follow the ESDL capability hierarchy:
       Consumer, Producer, Storage, Conversion, Transport, Other.
     """
-    from collections import OrderedDict
-
     try:
-        from esdl import esdl
-
         groups = OrderedDict([
             ("Consumer", []),
             ("Producer", []),

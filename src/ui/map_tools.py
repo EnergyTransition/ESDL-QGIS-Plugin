@@ -1,13 +1,17 @@
 """
-QGIS map canvas tools used by the Add Asset / Delete Asset flows:
-geometry-capture tools (point/line/polygon) for placing a new asset, and a
-single-click asset picker for selecting an existing asset on the map.
+QGIS map canvas tools used by the Add/Edit/Delete Asset and Add/Delete
+Connection flows: geometry-capture tools (point/line/polygon) for placing a
+new asset, a single-click asset picker for selecting an existing asset on
+the map, and a two-click tool for selecting a source/target asset pair to
+connect.
 """
 
-from qgis.gui import QgsMapTool, QgsRubberBand
+from qgis.gui import QgsMapTool, QgsRubberBand, QgsVertexMarker
 from qgis.core import QgsGeometry, QgsWkbTypes
 from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
+
+from ..esdl_visualize import _closest_endpoint_on_geom
 
 
 class PointCaptureMapTool(QgsMapTool):
@@ -59,9 +63,10 @@ class LineCaptureMapTool(QgsMapTool):
             self.canvas().unsetMapTool(self)
             self.geometry_captured.emit(geom)
 
-    def deactivated(self):
+    def deactivate(self):
         self._rubber_band.reset()
         self._points = []
+        super().deactivate()
 
 
 class PolygonCaptureMapTool(QgsMapTool):
@@ -99,9 +104,10 @@ class PolygonCaptureMapTool(QgsMapTool):
             self.canvas().unsetMapTool(self)
             self.geometry_captured.emit(geom)
 
-    def deactivated(self):
+    def deactivate(self):
         self._rubber_band.reset()
         self._points = []
+        super().deactivate()
 
 
 class AssetPickerMapTool(QgsMapTool):
@@ -110,8 +116,8 @@ class AssetPickerMapTool(QgsMapTool):
     spatial lookup) and emits *asset_selected* with its id string. Right-click
     cancels.
 
-    Generic on purpose: usable for Delete Asset today, and for any future
-    single-click asset-selection flow (e.g. Edit Asset) without duplication.
+    Generic on purpose: shared by Edit Asset, Delete Asset, and Delete
+    Connection, any single-click asset-selection flow, without duplication.
     """
 
     asset_selected = pyqtSignal(str)  # asset_id
@@ -132,3 +138,93 @@ class AssetPickerMapTool(QgsMapTool):
                 self.canvas().unsetMapTool(self)
         elif event.button() == Qt.RightButton:
             self.canvas().unsetMapTool(self)
+
+
+class ConnectAssetsMapTool(QgsMapTool):
+    """
+    Two-step click tool for connecting asset ports.
+
+    1. First click  — identifies the source asset; the connection line
+       anchors at whichever end of its geometry (In/Out, never a mid-line
+       turn vertex) is closest to the click, highlighted with a red circle.
+    2. Second click — identifies the target asset; emits *assets_selected* with
+                      the two asset IDs, then deactivates.
+
+    Requires a reference to an ESDLVisualizer for spatial feature lookup.
+    """
+
+    assets_selected = pyqtSignal(str, str)  # source_id, target_id
+
+    def __init__(self, canvas, visualizer):
+        super().__init__(canvas)
+        self._visualizer = visualizer
+        self._source_id = None
+        self._anchor_pt = None
+        self._rubber_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
+        self._rubber_band.setColor(QColor(255, 140, 0))
+        self._rubber_band.setWidth(2)
+        self._marker = QgsVertexMarker(canvas)
+        self._marker.setIconType(QgsVertexMarker.ICON_CIRCLE)
+        self._marker.setColor(QColor(220, 0, 0))
+        self._marker.setIconSize(10)
+        self._marker.setPenWidth(2)
+        self._marker.hide()
+
+    def _tolerance(self) -> float:
+        return self.canvas().mapUnitsPerPixel() * 10
+
+    def canvasReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            if self._source_id is not None:
+                # Undo the partial pick instead of forcing the user to
+                # finish an unwanted connection first.
+                self._reset_selection()
+            else:
+                self.canvas().unsetMapTool(self)
+            return
+        if event.button() != Qt.LeftButton:
+            return
+        point = self.toMapCoordinates(event.pos())
+        asset_id = self._visualizer.find_asset_id_near(point, self._tolerance())
+        if asset_id is None:
+            return
+        if self._source_id is None:
+            self._source_id = asset_id
+            src_asset = self._visualizer.get_asset_by_id(asset_id)
+            self._anchor_pt = _closest_endpoint_on_geom(
+                getattr(src_asset, "geometry", None), point
+            )
+            if self._anchor_pt is not None:
+                self._marker.setCenter(self._anchor_pt)
+                self._marker.show()
+        elif asset_id != self._source_id:
+            self._rubber_band.reset()
+            self._marker.hide()
+            self.assets_selected.emit(self._source_id, asset_id)
+            self.canvas().unsetMapTool(self)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.canvas().unsetMapTool(self)
+
+    def canvasMoveEvent(self, event):
+        if self._source_id is None or self._anchor_pt is None:
+            return
+        cur_pt = self.toMapCoordinates(event.pos())
+        self._rubber_band.reset(QgsWkbTypes.LineGeometry)
+        self._rubber_band.addPoint(self._anchor_pt)
+        self._rubber_band.addPoint(cur_pt)
+
+    def _reset_selection(self):
+        """Clear the current source pick so the user can pick a new one."""
+        self._source_id = None
+        self._anchor_pt = None
+        self._rubber_band.reset()
+        self._marker.hide()
+
+    def deactivate(self):
+        self._rubber_band.reset()
+        self._marker.hide()
+        self._source_id = None
+        self._anchor_pt = None
+        super().deactivate()
