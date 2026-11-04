@@ -9,11 +9,13 @@ from . import esdl_model
 from .esdl_io import export_esdl_file
 from .esdl_visualize import ESDLVisualizer, qgs_geom_to_esdl
 from .ui.add_asset_dialog import AddAttributesDialog, PickAssetDialog
+from .ui.connection_dialogs import ConnectPortsDialog, DisconnectDialog
 from .ui.dock import ESDLDock
 from .ui.esdl_browser_dialog import EsdlBrowserDialog
 from .ui.intro_dialog import ESDLIntroDialog
 from .ui.map_tools import (
     AssetPickerMapTool,
+    ConnectAssetsMapTool,
     LineCaptureMapTool,
     PointCaptureMapTool,
     PolygonCaptureMapTool,
@@ -114,6 +116,8 @@ class ESDLPlugin:
         self._dock.set_add_asset_callback(self._start_add_asset)
         self._dock.set_edit_asset_callback(self._start_edit_asset)
         self._dock.set_delete_asset_callback(self._start_delete_asset)
+        self._dock.set_connect_callback(self._start_connect)
+        self._dock.set_disconnect_callback(self._start_disconnect)
         self._dock.set_browse_esdl_callback(self._start_browse_esdl)
         self._dock.set_close_callback(self._on_dock_closed)
         self.iface.addDockWidget(Qt.RightDockWidgetArea, self._dock)
@@ -313,6 +317,91 @@ class ESDLPlugin:
                 container.eSet(feature, None)
         self.visualizer.refresh_layers()
         self._log_change(f"Deleted {type(asset).__name__} '{asset_name}'")
+
+    # ------------------------------------------------------------------
+    # Add-connection flow
+    # ------------------------------------------------------------------
+
+    def _start_connect(self):
+        """Activate the two-click rubber-band tool for connecting asset ports."""
+        tool = ConnectAssetsMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.assets_selected.connect(self._on_assets_selected)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click the source asset, then the target asset.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_assets_selected(self, source_id: str, target_id: str):
+        """Open the ConnectPortsDialog and wire the chosen ports."""
+        src = self.visualizer.get_asset_by_id(source_id)
+        tgt = self.visualizer.get_asset_by_id(target_id)
+        if src is None or tgt is None:
+            return
+
+        dlg = ConnectPortsDialog(src, tgt, parent=self.iface.mainWindow())
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        out_port, in_port = dlg.get_selected_ports()
+        if out_port is None or in_port is None:
+            return
+
+        out_asset = dlg.get_out_asset()
+        in_asset = tgt if out_asset is src else src
+
+        esdl_model.connect_ports(out_port, in_port)
+        self.visualizer.add_connection_to_layer(out_asset, in_asset)
+
+        out_name = getattr(out_asset, "name", None) or type(out_asset).__name__
+        in_name = getattr(in_asset, "name", None) or type(in_asset).__name__
+        self._log_change(f"Connected '{out_name}' \u2194 '{in_name}'")
+
+    # ------------------------------------------------------------------
+    # Delete-connection flow
+    # ------------------------------------------------------------------
+
+    def _start_disconnect(self):
+        """Activate the single-click map tool for selecting an asset to disconnect."""
+        tool = AssetPickerMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_disconnect)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click an asset on the map to remove one of its connections.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_disconnect(self, asset_id: str):
+        """Open DisconnectDialog and remove the chosen connection."""
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if asset is None:
+            return
+
+        dlg = DisconnectDialog(asset, parent=self.iface.mainWindow())
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        out_port, in_port = dlg.get_selected_connection()
+        if out_port is None or in_port is None:
+            return
+
+        out_asset, in_asset = dlg.get_connection_assets()
+        esdl_model.disconnect_ports(out_port, in_port)
+        self.visualizer.refresh_layers()
+
+        out_name = getattr(out_asset, "name", None) or (
+            type(out_asset).__name__ if out_asset else "?"
+        )
+        in_name = getattr(in_asset, "name", None) or (
+            type(in_asset).__name__ if in_asset else "?"
+        )
+        self._log_change(f"Disconnected '{out_name}' \u2194 '{in_name}'")
 
     # ------------------------------------------------------------------
     # Browse-ESDL flow
