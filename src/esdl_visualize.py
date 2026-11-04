@@ -68,7 +68,7 @@ _LABEL_FONT_SIZE = 3.0
 # Default line colours for specific transport asset classes;
 _LINE_COLORS = {
     "ElectricityCable": "#ff9090",
-    "Pipe": "#3B47E3",
+    "Pipe": "#5C534A",
 }
 
 # ---------------------------------------------------------------------------
