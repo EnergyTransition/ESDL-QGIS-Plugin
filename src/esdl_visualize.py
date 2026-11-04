@@ -690,8 +690,9 @@ class ESDLVisualizer:
     def find_asset_id_near(self, map_point, tolerance: float):
         """
         Search all asset layers for the first feature within *tolerance* map
-        units of *map_point* (a QgsPointXY).  Returns the feature's 'id'
-        attribute string, or None if nothing is found.
+        units of *map_point* (a QgsPointXY, in the map canvas/project CRS).
+        Returns the feature's 'id' attribute string, or None if nothing is
+        found.
         """
         rect = QgsRectangle(
             map_point.x() - tolerance,
@@ -699,10 +700,18 @@ class ESDLVisualizer:
             map_point.x() + tolerance,
             map_point.y() + tolerance,
         )
+        # map_point/tolerance are expressed in the project CRS, which may no
+        # longer be EPSG:4326. setDestinationCrs makes the
+        # feature request transform the filter rect into each layer's native
+        # CRS before filtering, instead of comparing mismatched coordinates.
+        request = QgsFeatureRequest().setFilterRect(rect)
+        request.setDestinationCrs(
+            QgsProject.instance().crs(), QgsProject.instance().transformContext()
+        )
         for class_name, layer in self._layers.items():
             if class_name.startswith("_"):
                 continue
-            for feat in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+            for feat in layer.getFeatures(request):
                 return feat["id"]
         return None
 
