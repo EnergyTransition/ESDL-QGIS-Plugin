@@ -38,7 +38,7 @@ class ESDLPlugin:
     def initGui(self):
         # Create an action (i.e. a button) with Logo
         icon = QIcon(os.path.join(self.wd, "esdl.png"))
-        self.action = QAction(icon, "ESDL plugin", self.iface.mainWindow())
+        self.action = QAction(icon, "ESDL QGIS Plugin", self.iface.mainWindow())
 
         self.action.triggered.connect(self.run)
 
@@ -112,6 +112,7 @@ class ESDLPlugin:
         )
         self._dock.set_export_callback(self._export)
         self._dock.set_add_asset_callback(self._start_add_asset)
+        self._dock.set_edit_asset_callback(self._start_edit_asset)
         self._dock.set_delete_asset_callback(self._start_delete_asset)
         self._dock.set_browse_esdl_callback(self._start_browse_esdl)
         self._dock.set_close_callback(self._on_dock_closed)
@@ -239,6 +240,38 @@ class ESDLPlugin:
         self._connect_layer_log_signals(layer)
 
         self._log_change(f"Added {pick['class_name']} '{pick['name']}'")
+
+    # ------------------------------------------------------------------
+    # Edit-asset flow
+    # ------------------------------------------------------------------
+
+    def _start_edit_asset(self):
+        """Activate the single-click map tool for selecting an asset to edit."""
+        tool = AssetPickerMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_edit)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Click an asset on the map to open it in the ESDL Browser.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_edit(self, asset_id: str):
+        """Open the ESDL Browser navigated directly to the selected asset."""
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if asset is None:
+            return
+        dlg = EsdlBrowserDialog(
+            self.energy_system,
+            initial_obj=asset,
+            parent=self.iface.mainWindow(),
+        )
+        dlg.exec_()
+        for change in dlg.changes:
+            self._log_change(change)
+        self.visualizer.refresh_layers()
 
     # ------------------------------------------------------------------
     # Delete-asset flow

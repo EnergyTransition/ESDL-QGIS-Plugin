@@ -1,5 +1,5 @@
 """
-Entry-point dialog shown when the ESDL plugin starts: a short introduction
+Entry-point dialog shown when the ESDL QGIS Plugin starts: a short introduction
 to what the plugin can do, plus a button to load a local .esdl file.
 """
 
@@ -27,7 +27,7 @@ class ESDLIntroDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ESDL plugin")
+        self.setWindowTitle("ESDL QGIS Plugin")
         self.setMinimumWidth(360)
         self.loaded_data = None
         self._setup_ui()
