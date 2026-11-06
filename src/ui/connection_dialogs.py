@@ -32,7 +32,7 @@ class ConnectPortsDialog(QDialog):
     normalized *(out_port, in_port)* pair. Call *get_out_asset()* to find
     which asset owns the OutPort (used for map arrow direction).
     """
- 
+
     def __init__(self, source_asset, target_asset, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Connect Ports")
@@ -143,9 +143,9 @@ class ConnectPortsDialog(QDialog):
             return
         port_a = self._all_ports_a[idx_a]
         port_b = self._all_ports_b[idx_b]
-        valid = (
-            isinstance(port_a, esdl.OutPort) and isinstance(port_b, esdl.InPort)
-        ) or (isinstance(port_a, esdl.InPort) and isinstance(port_b, esdl.OutPort))
+        valid = (isinstance(port_a, esdl.OutPort) and isinstance(port_b, esdl.InPort)) or (
+            isinstance(port_a, esdl.InPort) and isinstance(port_b, esdl.OutPort)
+        )
         self._ok_btn.setEnabled(valid)
 
     def get_selected_ports(self):
@@ -203,14 +203,10 @@ class DisconnectDialog(QDialog):
             out_port_name = getattr(out_port, "name", None) or "OutPort"
             in_port_name = getattr(in_port, "name", None) or "InPort"
             out_asset_name = (
-                getattr(out_asset, "name", None) or type(out_asset).__name__
-                if out_asset
-                else "?"
+                getattr(out_asset, "name", None) or type(out_asset).__name__ if out_asset else "?"
             )
             in_asset_name = (
-                getattr(in_asset, "name", None) or type(in_asset).__name__
-                if in_asset
-                else "?"
+                getattr(in_asset, "name", None) or type(in_asset).__name__ if in_asset else "?"
             )
             self._list.addItem(
                 f"{out_asset_name} [{out_port_name}]  ↔  {in_asset_name} [{in_port_name}]"

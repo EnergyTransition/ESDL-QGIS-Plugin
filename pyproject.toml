@@ -1,0 +1,13 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["__pycache__"]
+
+[tool.ruff.lint]
+# Minimal rule set: pyflakes (unused imports/vars, undefined names, etc.),
+# pycodestyle errors/warnings (basic style issues).
+select = ["E", "F", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

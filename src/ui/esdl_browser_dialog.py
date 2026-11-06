@@ -313,9 +313,7 @@ class EsdlBrowserDialog(QDialog):
                 # List-typed attributes: read-only display in this prototype
                 val = attr.get("value")
                 display = (
-                    ", ".join(str(v) for v in val)
-                    if isinstance(val, list)
-                    else str(val or "")
+                    ", ".join(str(v) for v in val) if isinstance(val, list) else str(val or "")
                 )
                 w = QLineEdit(display)
                 w.setReadOnly(True)
@@ -363,11 +361,7 @@ class EsdlBrowserDialog(QDialog):
             return QWidget()
 
         raw = parent_obj.eGet(feature)
-        items = (
-            list(raw)
-            if isinstance(raw, ECollection)
-            else ([raw] if raw is not None else [])
-        )
+        items = list(raw) if isinstance(raw, ECollection) else ([raw] if raw is not None else [])
 
         row = QFrame()
         row.setFrameShape(QFrame.StyledPanel)
@@ -403,9 +397,7 @@ class EsdlBrowserDialog(QDialog):
                     "border: none; padding: 1px 2px; }"
                     "QPushButton:hover { color: #003a8c; }"
                 )
-                btn.clicked.connect(
-                    lambda checked=False, o=item_obj: self._navigate_to(o)
-                )
+                btn.clicked.connect(lambda checked=False, o=item_obj: self._navigate_to(o))
                 vl.addWidget(btn)
         else:
             vl.addWidget(QLabel("<i style='color: #aaa;'>(none)</i>"))
@@ -424,9 +416,7 @@ class EsdlBrowserDialog(QDialog):
                 add_btn.setFixedSize(26, 22)
                 add_btn.setToolTip(f"Add to {name}")
                 add_btn.clicked.connect(
-                    lambda checked=False, o=parent_obj, r=ref: self._add_containment(
-                        o, r
-                    )
+                    lambda checked=False, o=parent_obj, r=ref: self._add_containment(o, r)
                 )
                 for item_obj in items:
                     del_btn = QPushButton("×")
@@ -434,8 +424,8 @@ class EsdlBrowserDialog(QDialog):
                     del_btn.setStyleSheet("color: #c00; font-weight: bold;")
                     del_btn.setToolTip("Delete this item")
                     del_btn.clicked.connect(
-                        lambda checked=False, o=item_obj, po=parent_obj, r=ref: self._delete_containment(
-                            o, po, r
+                        lambda checked=False, o=item_obj, po=parent_obj, r=ref: (
+                            self._delete_containment(o, po, r)
                         )
                     )
                     al.addWidget(del_btn)
@@ -455,9 +445,7 @@ class EsdlBrowserDialog(QDialog):
                     clr_btn.setStyleSheet("color: #c00; font-weight: bold;")
                     clr_btn.setToolTip("Clear reference")
                     clr_btn.clicked.connect(
-                        lambda checked=False, o=parent_obj, r=ref: self._clear_xref(
-                            o, r
-                        )
+                        lambda checked=False, o=parent_obj, r=ref: self._clear_xref(o, r)
                     )
                     al.addWidget(clr_btn)
 
@@ -495,9 +483,7 @@ class EsdlBrowserDialog(QDialog):
                 parent_obj.eGet(ref["name"]).append(new_obj)
             else:
                 parent_obj.eSet(feature, new_obj)
-            self.changes.append(
-                f"Added {type_name} '{object_repr(new_obj)}' to {ref['name']}"
-            )
+            self.changes.append(f"Added {type_name} '{object_repr(new_obj)}' to {ref['name']}")
             self._rebuild_content()
         except Exception as exc:
             QMessageBox.warning(self, "Error", f"Could not create {type_name}: {exc}")
@@ -521,9 +507,7 @@ class EsdlBrowserDialog(QDialog):
                 parent_obj.eGet(ref["name"]).remove(item_obj)
             else:
                 parent_obj.eSet(feature, None)
-            self.changes.append(
-                f"Deleted {item_type_name} '{label}' from {ref['name']}"
-            )
+            self.changes.append(f"Deleted {item_type_name} '{label}' from {ref['name']}")
             # Remove the deleted object from navigation history
             self._history = [h for h in self._history if h is not item_obj]
             if self._obj is item_obj:
@@ -569,9 +553,7 @@ class EsdlBrowserDialog(QDialog):
         try:
             feature = parent_obj.eClass.findEStructuralFeature(ref["name"])
             parent_obj.eSet(feature, None)
-            self.changes.append(
-                f"Cleared {ref['name']} on '{object_repr(parent_obj)}'"
-            )
+            self.changes.append(f"Cleared {ref['name']} on '{object_repr(parent_obj)}'")
             self._rebuild_content()
         except Exception as exc:
             QMessageBox.warning(self, "Error", f"Could not clear reference: {exc}")

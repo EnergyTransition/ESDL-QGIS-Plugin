@@ -219,14 +219,16 @@ def list_asset_classes_grouped():
       Consumer, Producer, Storage, Conversion, Transport, Other.
     """
     try:
-        groups = OrderedDict([
-            ("Consumer", []),
-            ("Producer", []),
-            ("Storage", []),
-            ("Conversion", []),
-            ("Transport", []),
-            ("Other", []),
-        ])
+        groups = OrderedDict(
+            [
+                ("Consumer", []),
+                ("Producer", []),
+                ("Storage", []),
+                ("Conversion", []),
+                ("Transport", []),
+                ("Other", []),
+            ]
+        )
         cap_bases = [
             ("Consumer", getattr(esdl, "Consumer", None)),
             ("Producer", getattr(esdl, "Producer", None)),
@@ -237,11 +239,7 @@ def list_asset_classes_grouped():
         base = esdl.Asset
         for name in sorted(dir(esdl)):
             cls = getattr(esdl, name, None)
-            if not (
-                isinstance(cls, type)
-                and issubclass(cls, base)
-                and cls is not base
-            ):
+            if not (isinstance(cls, type) and issubclass(cls, base) and cls is not base):
                 continue
             placed = False
             for group_name, group_base in cap_bases:

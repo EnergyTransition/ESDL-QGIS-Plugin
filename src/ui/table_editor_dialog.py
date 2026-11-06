@@ -111,9 +111,7 @@ class TableEditorDialog(QDialog):
         top.addWidget(self._class_combo, stretch=1)
         outer.addLayout(top)
 
-        self._path_lbl = QLabel(
-            "<i style='color:#888'>Select a level in the tree.</i>"
-        )
+        self._path_lbl = QLabel("<i style='color:#888'>Select a level in the tree.</i>")
         self._path_lbl.setWordWrap(True)
         outer.addWidget(self._path_lbl)
 
@@ -216,13 +214,9 @@ class TableEditorDialog(QDialog):
         self._tree.addTopLevelItem(attrs_root)
 
         for ref_entry in BULK_EDIT_REFERENCES:
-            root_path = [
-                {"ref_name": ref_entry["ref_name"], "type_name": ref_entry["type_name"]}
-            ]
+            root_path = [{"ref_name": ref_entry["ref_name"], "type_name": ref_entry["type_name"]}]
             root = QTreeWidgetItem([f"{ref_entry['label']}  ({ref_entry['type_name']})"])
-            root.setData(
-                0, Qt.UserRole, {"path": root_path, "type_name": ref_entry["type_name"]}
-            )
+            root.setData(0, Qt.UserRole, {"path": root_path, "type_name": ref_entry["type_name"]})
             self._tree.addTopLevelItem(root)
 
             probe = instantiate_type(ref_entry["type_name"])
@@ -234,13 +228,9 @@ class TableEditorDialog(QDialog):
                 child_type = ref_entry["default_child_type"]
                 if child_type not in ref["types"]:
                     child_type = ref["types"][0]  # configured default not valid here
-                child_path = root_path + [
-                    {"ref_name": ref["name"], "type_name": child_type}
-                ]
+                child_path = root_path + [{"ref_name": ref["name"], "type_name": child_type}]
                 child = QTreeWidgetItem([f"{ref['name']}  ({child_type})"])
-                child.setData(
-                    0, Qt.UserRole, {"path": child_path, "type_name": child_type}
-                )
+                child.setData(0, Qt.UserRole, {"path": child_path, "type_name": child_type})
                 root.addChild(child)
 
         self._tree.expandAll()
@@ -305,9 +295,7 @@ class TableEditorDialog(QDialog):
             return
 
         self._attrs = [
-            a
-            for a in get_asset_attributes(instantiate_type(level_type_name))
-            if not a.get("many")
+            a for a in get_asset_attributes(instantiate_type(level_type_name)) if not a.get("many")
         ]
         # A handful of ESDL value types (SingleValue, profiles, ...) carry a
         # profileQuantityAndUnit reference. Rather than force users to drill
@@ -323,9 +311,7 @@ class TableEditorDialog(QDialog):
             None,
         )
         self._instances = [
-            inst
-            for inst in self._energy_system.eAllContents()
-            if inst.eClass.name == class_name
+            inst for inst in self._energy_system.eAllContents() if inst.eClass.name == class_name
         ]
 
         if not self._attrs and not self._qau_ref_name:
@@ -379,9 +365,7 @@ class TableEditorDialog(QDialog):
             self._table.setItem(row, self._asset_col, name_item)
 
             leaf_attrs_by_name = (
-                {a["name"]: a for a in get_asset_attributes(leaf)}
-                if leaf is not None
-                else {}
+                {a["name"]: a for a in get_asset_attributes(leaf)} if leaf is not None else {}
             )
 
             for i, attr_meta in enumerate(self._attrs):
@@ -441,9 +425,7 @@ class TableEditorDialog(QDialog):
             if current_target is not None and current_target is q:
                 matched_idx = i
         if matched_idx is None:
-            placeholder_label = (
-                "(custom, not linked)" if current_target is not None else "(none)"
-            )
+            placeholder_label = "(custom, not linked)" if current_target is not None else "(none)"
             combo.insertItem(0, placeholder_label, None)
             combo.setCurrentIndex(0)
         else:
@@ -567,8 +549,7 @@ class TableEditorDialog(QDialog):
             self._row_status_lbl.setText(f"<b>{object_repr(inst)}</b> \u2014 {state}")
         else:
             self._row_status_lbl.setText(
-                f"<b>{len(rows)} selected</b> \u2014 {set_count} set, "
-                f"{unset_count} not set"
+                f"<b>{len(rows)} selected</b> \u2014 {set_count} set, {unset_count} not set"
             )
         self._create_row_btn.setEnabled(unset_count > 0)
         self._delete_row_btn.setEnabled(set_count > 0)

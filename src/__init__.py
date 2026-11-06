@@ -175,13 +175,13 @@ class ESDLPlugin:
             return
         self._logged_layer_ids.add(layer.id())
         layer.attributeValueChanged.connect(
-            lambda fid, idx, val, l=layer: self._log_change(
-                f"[{l.name()}] feature {fid}: '{l.fields()[idx].name()}' \u2192 {val!r}"
+            lambda fid, idx, val, lyr=layer: self._log_change(
+                f"[{lyr.name()}] feature {fid}: '{lyr.fields()[idx].name()}' \u2192 {val!r}"
             )
         )
         layer.geometryChanged.connect(
-            lambda fid, geom, l=layer: self._log_change(
-                f"[{l.name()}] feature {fid}: geometry moved"
+            lambda fid, geom, lyr=layer: self._log_change(
+                f"[{lyr.name()}] feature {fid}: geometry moved"
             )
         )
 
@@ -208,9 +208,7 @@ class ESDLPlugin:
             tool = PointCaptureMapTool(canvas)
             hint_msg = "Click the map to place the asset."
 
-        tool.geometry_captured.connect(
-            lambda geom: self._on_geometry_captured(geom, pick)
-        )
+        tool.geometry_captured.connect(lambda geom: self._on_geometry_captured(geom, pick))
         self._active_map_tool = tool  # keep reference to prevent GC
         canvas.setMapTool(tool)
         self.iface.messageBar().pushMessage(
@@ -400,9 +398,7 @@ class ESDLPlugin:
         out_name = getattr(out_asset, "name", None) or (
             type(out_asset).__name__ if out_asset else "?"
         )
-        in_name = getattr(in_asset, "name", None) or (
-            type(in_asset).__name__ if in_asset else "?"
-        )
+        in_name = getattr(in_asset, "name", None) or (type(in_asset).__name__ if in_asset else "?")
         self._log_change(f"Disconnected '{out_name}' \u2194 '{in_name}'")
 
     # ------------------------------------------------------------------

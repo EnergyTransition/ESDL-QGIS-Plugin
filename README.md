@@ -79,6 +79,31 @@ src/
     └── map_tools.py            # Map canvas tools for geometry capture and asset/port picking
 ```
 
+## Development
+
+### Linting & Formatting
+
+This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting. Configuration lives in [`pyproject.toml`](pyproject.toml).
+
+Install it in a virtual environment, separate from the QGIS Python interpreter:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate      # Windows
+# source .venv/bin/activate   # macOS/Linux
+
+pip install -r requirements-dev.txt
+```
+
+Then, from the project root, run:
+
+```bash
+ruff check .          # lint
+ruff format .         # auto-format
+```
+
+A [GitHub Actions workflow](.github/workflows/lint.yml) runs both checks on every push and pull request.
+
 ## Tutorials
 
 Coming soon
@@ -98,6 +123,7 @@ Coming soon
 - Follow the existing [project structure](#project-structure) as much as possible
 - Include clear commit messages
 - Test your changes with QGIS before submitting
+- Lint and format your code with [ruff](#linting--formatting) before submitting
 
 ### Releases
 

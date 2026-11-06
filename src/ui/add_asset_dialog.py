@@ -20,7 +20,11 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtCore import Qt, QVariant
 from qgis.PyQt.QtGui import QColor, QStandardItemModel, QStandardItem
 
-from ..esdl_model import geom_hint_for_class, list_asset_classes_grouped, make_temp_asset
+from ..esdl_model import (
+    geom_hint_for_class,
+    list_asset_classes_grouped,
+    make_temp_asset,
+)
 
 
 class PickAssetDialog(QDialog):

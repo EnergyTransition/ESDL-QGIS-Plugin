@@ -24,6 +24,7 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant, Qt
 from qgis.PyQt.QtGui import QColor, QFont
+from qgis.PyQt import sip
 from pathlib import Path
 
 from .esdl_ecore import coerce_attr_value, describe_asset_attributes, set_esdl_attr
@@ -53,6 +54,8 @@ _CAPABILITY_COLORS = {
 
 # Circle fill colour used as exception when capability can't be determined.
 _UNKNOWN_CAPABILITY_COLOR = "lightgray"
+
+_CONNECTION_LINE_WIDTH = "0.6"
 
 # Marker sizes (mm) for the capability circle and its overlaid PNG icon.
 _CIRCLE_SIZE = 8.0
@@ -85,7 +88,7 @@ def _class_abbreviation(class_name: str) -> str:
 
 def _apply_abbreviation_label(layer, class_name: str) -> None:
     """
-    Show *class_name*'s capital-letter abbreviation centred on every point feature. 
+    Show *class_name*'s capital-letter abbreviation centred on every point feature.
     Used in place of a PNG icon when none is available. Silently does
     nothing if labelling can't be configured (e.g. API differences across
     QGIS versions).
@@ -133,7 +136,7 @@ def _apply_point_icon(layer, class_name: str, asset=None) -> None:
     Build a MapEditor-style point symbol: a circle filled with the colour of
     the asset's ESDL capability (Producer/Conversion/Transport/Consumer/
     Storage). The class's PNG icon (src/icons/{class_name}.png) is layered on
-    top when available; otherwise the class's capital-letter abbreviation is shown 
+    top when available; otherwise the class's capital-letter abbreviation is shown
     as a text label instead. Falls back to an uncoloured circle when the
     capability can't be determined.
     """
@@ -193,7 +196,7 @@ def _apply_directional_symbol(layer) -> None:
     """
     arrow = QgsSimpleMarkerSymbolLayer()
     arrow.setShape(Qgis.MarkerShape.ArrowHeadFilled)
-    arrow.setSize(3.5)
+    arrow.setSize(4.5)
     # Inherit the colour from the existing base line symbol
     base_color = layer.renderer().symbol().color()
     arrow.setColor(base_color)
@@ -435,12 +438,8 @@ def _collect_connections(assets_by_class: dict) -> list:
     """
     result = []
     for in_port, in_asset, out_port, out_asset in iter_port_connections(assets_by_class):
-        from_lon, from_lat = _geom_endpoint(
-            getattr(in_asset, "geometry", None), use_last=False
-        )
-        to_lon, to_lat = _geom_endpoint(
-            getattr(out_asset, "geometry", None), use_last=True
-        )
+        from_lon, from_lat = _geom_endpoint(getattr(in_asset, "geometry", None), use_last=False)
+        to_lon, to_lat = _geom_endpoint(getattr(out_asset, "geometry", None), use_last=True)
         if None in (from_lon, from_lat, to_lon, to_lat):
             continue
         result.append(
@@ -671,7 +670,9 @@ class ESDLVisualizer:
             return None
         pr.addFeatures(features)
         layer.updateExtents()
-        symbol = QgsLineSymbol.createSimple({"line_style": "dash", "color": "grey"})
+        symbol = QgsLineSymbol.createSimple(
+            {"line_style": "dash", "color": "grey", "width": _CONNECTION_LINE_WIDTH}
+        )
         layer.renderer().setSymbol(symbol)
         return layer
 
@@ -744,29 +745,21 @@ class ESDLVisualizer:
                     extra_vals.append(str(val) if val is not None else "")
             f = QgsFeature(layer.fields())
             f.setGeometry(geom)
-            f.setAttributes(
-                [asset.id, asset.name or "", class_name, area_name, *extra_vals]
-            )
+            f.setAttributes([asset.id, asset.name or "", class_name, area_name, *extra_vals])
             layer.dataProvider().addFeatures([f])
             layer.updateExtents()
             layer.triggerRepaint()
             return layer
         else:
             # First asset of this class — build a full layer from scratch
-            layer = self._build_asset_layer(
-                class_name, [{"asset": asset, "area_name": area_name}]
-            )
+            layer = self._build_asset_layer(class_name, [{"asset": asset, "area_name": area_name}])
             if layer is None:
                 return None
             self._layers[class_name] = layer
             root = QgsProject.instance().layerTreeRoot()
             group_name = self._es.name or "ESDL"
             group = next(
-                (
-                    c
-                    for c in root.children()
-                    if hasattr(c, "name") and c.name() == group_name
-                ),
+                (c for c in root.children() if hasattr(c, "name") and c.name() == group_name),
                 None,
             )
             QgsProject.instance().addMapLayer(layer, False)
@@ -783,12 +776,8 @@ class ESDLVisualizer:
         out_asset owns the OutPort; in_asset owns the InPort.
         The 'Connections' layer is created on first use.
         """
-        from_lon, from_lat = _geom_endpoint(
-            getattr(out_asset, "geometry", None), use_last=True
-        )
-        to_lon, to_lat = _geom_endpoint(
-            getattr(in_asset, "geometry", None), use_last=False
-        )
+        from_lon, from_lat = _geom_endpoint(getattr(out_asset, "geometry", None), use_last=True)
+        to_lon, to_lat = _geom_endpoint(getattr(in_asset, "geometry", None), use_last=False)
         if None in (from_lon, from_lat, to_lon, to_lat):
             return
         line_geom = QgsGeometry.fromPolylineXY(
@@ -810,17 +799,15 @@ class ESDLVisualizer:
                 ]
             )
             layer.updateFields()
-            symbol = QgsLineSymbol.createSimple({"line_style": "dash", "color": "grey"})
+            symbol = QgsLineSymbol.createSimple(
+                {"line_style": "dash", "color": "grey", "width": _CONNECTION_LINE_WIDTH}
+            )
             layer.renderer().setSymbol(symbol)
             self._layers["_connections"] = layer
             root = QgsProject.instance().layerTreeRoot()
             group_name = self._es.name or "ESDL"
             group = next(
-                (
-                    c
-                    for c in root.children()
-                    if hasattr(c, "name") and c.name() == group_name
-                ),
+                (c for c in root.children() if hasattr(c, "name") and c.name() == group_name),
                 None,
             )
             QgsProject.instance().addMapLayer(layer, False)
@@ -1006,6 +993,6 @@ class ESDLVisualizer:
         ids = [layer.id() for layer in self._layers.values()]
         QgsProject.instance().removeMapLayers(ids)
         self._layers.clear()
-        if self._group is not None:
+        if self._group is not None and not sip.isdeleted(self._group):
             QgsProject.instance().layerTreeRoot().removeChildNode(self._group)
-            self._group = None
+        self._group = None
