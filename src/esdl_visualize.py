@@ -85,7 +85,7 @@ def _class_abbreviation(class_name: str) -> str:
 
 def _apply_abbreviation_label(layer, class_name: str) -> None:
     """
-    Show *class_name*'s capital-letter abbreviation centred on every point feature. 
+    Show *class_name*'s capital-letter abbreviation centred on every point feature.
     Used in place of a PNG icon when none is available. Silently does
     nothing if labelling can't be configured (e.g. API differences across
     QGIS versions).
@@ -133,7 +133,7 @@ def _apply_point_icon(layer, class_name: str, asset=None) -> None:
     Build a MapEditor-style point symbol: a circle filled with the colour of
     the asset's ESDL capability (Producer/Conversion/Transport/Consumer/
     Storage). The class's PNG icon (src/icons/{class_name}.png) is layered on
-    top when available; otherwise the class's capital-letter abbreviation is shown 
+    top when available; otherwise the class's capital-letter abbreviation is shown
     as a text label instead. Falls back to an uncoloured circle when the
     capability can't be determined.
     """
@@ -435,12 +435,8 @@ def _collect_connections(assets_by_class: dict) -> list:
     """
     result = []
     for in_port, in_asset, out_port, out_asset in iter_port_connections(assets_by_class):
-        from_lon, from_lat = _geom_endpoint(
-            getattr(in_asset, "geometry", None), use_last=False
-        )
-        to_lon, to_lat = _geom_endpoint(
-            getattr(out_asset, "geometry", None), use_last=True
-        )
+        from_lon, from_lat = _geom_endpoint(getattr(in_asset, "geometry", None), use_last=False)
+        to_lon, to_lat = _geom_endpoint(getattr(out_asset, "geometry", None), use_last=True)
         if None in (from_lon, from_lat, to_lon, to_lat):
             continue
         result.append(
@@ -744,29 +740,21 @@ class ESDLVisualizer:
                     extra_vals.append(str(val) if val is not None else "")
             f = QgsFeature(layer.fields())
             f.setGeometry(geom)
-            f.setAttributes(
-                [asset.id, asset.name or "", class_name, area_name, *extra_vals]
-            )
+            f.setAttributes([asset.id, asset.name or "", class_name, area_name, *extra_vals])
             layer.dataProvider().addFeatures([f])
             layer.updateExtents()
             layer.triggerRepaint()
             return layer
         else:
             # First asset of this class — build a full layer from scratch
-            layer = self._build_asset_layer(
-                class_name, [{"asset": asset, "area_name": area_name}]
-            )
+            layer = self._build_asset_layer(class_name, [{"asset": asset, "area_name": area_name}])
             if layer is None:
                 return None
             self._layers[class_name] = layer
             root = QgsProject.instance().layerTreeRoot()
             group_name = self._es.name or "ESDL"
             group = next(
-                (
-                    c
-                    for c in root.children()
-                    if hasattr(c, "name") and c.name() == group_name
-                ),
+                (c for c in root.children() if hasattr(c, "name") and c.name() == group_name),
                 None,
             )
             QgsProject.instance().addMapLayer(layer, False)
@@ -783,12 +771,8 @@ class ESDLVisualizer:
         out_asset owns the OutPort; in_asset owns the InPort.
         The 'Connections' layer is created on first use.
         """
-        from_lon, from_lat = _geom_endpoint(
-            getattr(out_asset, "geometry", None), use_last=True
-        )
-        to_lon, to_lat = _geom_endpoint(
-            getattr(in_asset, "geometry", None), use_last=False
-        )
+        from_lon, from_lat = _geom_endpoint(getattr(out_asset, "geometry", None), use_last=True)
+        to_lon, to_lat = _geom_endpoint(getattr(in_asset, "geometry", None), use_last=False)
         if None in (from_lon, from_lat, to_lon, to_lat):
             return
         line_geom = QgsGeometry.fromPolylineXY(
@@ -816,11 +800,7 @@ class ESDLVisualizer:
             root = QgsProject.instance().layerTreeRoot()
             group_name = self._es.name or "ESDL"
             group = next(
-                (
-                    c
-                    for c in root.children()
-                    if hasattr(c, "name") and c.name() == group_name
-                ),
+                (c for c in root.children() if hasattr(c, "name") and c.name() == group_name),
                 None,
             )
             QgsProject.instance().addMapLayer(layer, False)

@@ -56,9 +56,7 @@ class ESDLDock(QDockWidget):
         asset_row.addWidget(self._add_asset_btn)
 
         self._edit_asset_btn = QPushButton("Edit Asset")
-        self._edit_asset_btn.setToolTip(
-            "Click an asset on the map to open it in the ESDL Browser"
-        )
+        self._edit_asset_btn.setToolTip("Click an asset on the map to open it in the ESDL Browser")
         self._edit_asset_btn.clicked.connect(self._on_edit_asset)
         asset_row.addWidget(self._edit_asset_btn)
 
@@ -88,9 +86,7 @@ class ESDLDock(QDockWidget):
         layout.addSpacing(8)
 
         self._browse_esdl_btn = QPushButton("Browse ESDL")
-        self._browse_esdl_btn.setToolTip(
-            "Inspect and edit ESDL object attributes and references"
-        )
+        self._browse_esdl_btn.setToolTip("Inspect and edit ESDL object attributes and references")
         self._browse_esdl_btn.clicked.connect(self._on_browse_esdl)
         layout.addWidget(self._browse_esdl_btn)
 

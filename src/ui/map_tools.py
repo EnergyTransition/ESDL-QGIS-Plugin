@@ -19,7 +19,7 @@ from qgis.PyQt.QtGui import QColor
 
 from ..esdl_visualize import _closest_endpoint_on_geom
 
-# All ESDL asset layers/geometries are stored in EPSG:4326, 
+# All ESDL asset layers/geometries are stored in EPSG:4326,
 # regardless of the project's current CRS.
 # Map tools must convert between the two whenever they compare a
 # clicked point (in canvas/project CRS) against stored lon/lat geometry.
@@ -40,9 +40,7 @@ def _to_wgs84(canvas, point):
 
 def _from_wgs84(canvas, point):
     """Convert an EPSG:4326 point to the map canvas's CRS."""
-    return _wgs84_transform(canvas).transform(
-        point, QgsCoordinateTransform.ReverseTransform
-    )
+    return _wgs84_transform(canvas).transform(point, QgsCoordinateTransform.ReverseTransform)
 
 
 class PointCaptureMapTool(QgsMapTool):
@@ -236,9 +234,7 @@ class ConnectAssetsMapTool(QgsMapTool):
                 getattr(src_asset, "geometry", None), _to_wgs84(self.canvas(), point)
             )
             self._anchor_pt = (
-                _from_wgs84(self.canvas(), anchor_wgs84)
-                if anchor_wgs84 is not None
-                else None
+                _from_wgs84(self.canvas(), anchor_wgs84) if anchor_wgs84 is not None else None
             )
             if self._anchor_pt is not None:
                 self._marker.setCenter(self._anchor_pt)
