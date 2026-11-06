@@ -24,6 +24,7 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant, Qt
 from qgis.PyQt.QtGui import QColor, QFont
+from qgis.PyQt import sip
 from pathlib import Path
 
 from .esdl_ecore import coerce_attr_value, describe_asset_attributes, set_esdl_attr
@@ -53,6 +54,8 @@ _CAPABILITY_COLORS = {
 
 # Circle fill colour used as exception when capability can't be determined.
 _UNKNOWN_CAPABILITY_COLOR = "lightgray"
+
+_CONNECTION_LINE_WIDTH = "0.6"
 
 # Marker sizes (mm) for the capability circle and its overlaid PNG icon.
 _CIRCLE_SIZE = 8.0
@@ -193,7 +196,7 @@ def _apply_directional_symbol(layer) -> None:
     """
     arrow = QgsSimpleMarkerSymbolLayer()
     arrow.setShape(Qgis.MarkerShape.ArrowHeadFilled)
-    arrow.setSize(3.5)
+    arrow.setSize(4.5)
     # Inherit the colour from the existing base line symbol
     base_color = layer.renderer().symbol().color()
     arrow.setColor(base_color)
@@ -667,7 +670,9 @@ class ESDLVisualizer:
             return None
         pr.addFeatures(features)
         layer.updateExtents()
-        symbol = QgsLineSymbol.createSimple({"line_style": "dash", "color": "grey"})
+        symbol = QgsLineSymbol.createSimple(
+            {"line_style": "dash", "color": "grey", "width": _CONNECTION_LINE_WIDTH}
+        )
         layer.renderer().setSymbol(symbol)
         return layer
 
@@ -794,7 +799,9 @@ class ESDLVisualizer:
                 ]
             )
             layer.updateFields()
-            symbol = QgsLineSymbol.createSimple({"line_style": "dash", "color": "grey"})
+            symbol = QgsLineSymbol.createSimple(
+                {"line_style": "dash", "color": "grey", "width": _CONNECTION_LINE_WIDTH}
+            )
             layer.renderer().setSymbol(symbol)
             self._layers["_connections"] = layer
             root = QgsProject.instance().layerTreeRoot()
@@ -986,6 +993,6 @@ class ESDLVisualizer:
         ids = [layer.id() for layer in self._layers.values()]
         QgsProject.instance().removeMapLayers(ids)
         self._layers.clear()
-        if self._group is not None:
+        if self._group is not None and not sip.isdeleted(self._group):
             QgsProject.instance().layerTreeRoot().removeChildNode(self._group)
-            self._group = None
+        self._group = None
