@@ -40,6 +40,9 @@ from ..esdl_ecore import (
 # Shared scalar-attribute editor widgets (EAttribute forms)
 # =============================================================================
 
+# Decimal places shown/accepted for EDouble/EFloat attribute editors.
+NUMERIC_ATTR_DECIMALS = 1
+
 
 def make_scalar_attr_editor(attr: dict) -> QWidget:
     """
@@ -70,7 +73,7 @@ def make_scalar_attr_editor(attr: dict) -> QWidget:
     elif attr["type"] in ("EDouble", "EFloat"):
         w = QDoubleSpinBox()
         w.setRange(-1e15, 1e15)
-        w.setDecimals(6)
+        w.setDecimals(NUMERIC_ATTR_DECIMALS)
         w.blockSignals(True)
         try:
             v = attr.get("value")

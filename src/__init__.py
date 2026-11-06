@@ -13,6 +13,7 @@ from .ui.connection_dialogs import ConnectPortsDialog, DisconnectDialog
 from .ui.dock import ESDLDock
 from .ui.esdl_browser_dialog import EsdlBrowserDialog
 from .ui.intro_dialog import ESDLIntroDialog
+from .ui.table_editor_dialog import TableEditorDialog
 from .ui.map_tools import (
     AssetPickerMapTool,
     ConnectAssetsMapTool,
@@ -119,6 +120,7 @@ class ESDLPlugin:
         self._dock.set_connect_callback(self._start_connect)
         self._dock.set_disconnect_callback(self._start_disconnect)
         self._dock.set_browse_esdl_callback(self._start_browse_esdl)
+        self._dock.set_table_editor_callback(self._start_table_editor)
         self._dock.set_close_callback(self._on_dock_closed)
         self.iface.addDockWidget(Qt.RightDockWidgetArea, self._dock)
 
@@ -416,4 +418,15 @@ class ESDLPlugin:
         # immediately) — logged regardless of Accept/Cancel for that reason.
         for change in dlg.changes:
             self._log_change(change)
+        self.visualizer.refresh_layers()
+
+    # ------------------------------------------------------------------
+    # Table Editor flow
+    # ------------------------------------------------------------------
+
+    def _start_table_editor(self):
+        """Open the Table Editor dialog, log on accept, and refresh layers."""
+        dlg = TableEditorDialog(self.energy_system, parent=self.iface.mainWindow())
+        if dlg.exec_() == QDialog.Accepted:
+            self._log_change("Edited asset(s) via Table Editor")
         self.visualizer.refresh_layers()
