@@ -4,7 +4,7 @@ qgisMinimumVersion=3.44
 description=Load, visualize, edit, and export ESDL energy system files directly in QGIS.
 about=Load, visualize, edit, and export Energy System Description Language (ESDL) files
     directly in QGIS. Tested against QGIS 3.44 only.
-version=0.2.0
+version=0.3.0
 author=Cheng-Kai Wang
 email=cheng-kai.wang@tno.nl
 tracker=https://github.com/EnergyTransition/ESDL-QGIS-Plugin/issues
