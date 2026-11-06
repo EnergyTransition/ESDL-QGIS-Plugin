@@ -59,31 +59,54 @@ Restart QGIS afterwards and enable the plugin via **Plugins → Manage and Insta
 
 ```text
 src/
-├── __init__.py        # Plugin entry point: QGIS classFactory, toolbar action, and wiring between the intro dialog, dock panel, ESDL importer, and visualizer — including the Add/Delete Asset flows and the action-log hooks
-├── esdl_io.py          # Local-file import/export: file-picker dialogs for opening/saving .esdl files
-├── esdl_model.py       # Pure pyESDL/pyecore model operations (no QGIS imports) — port/connection topology traversal, asset creation, port/area attachment, and asset-class discovery
-├── esdl_ecore.py       # Pure pyecore meta-model introspection utilities (no QGIS imports) — generic reading/writing of ESDL EAttributes
-├── esdl_visualize.py   # Converts a pyESDL EnergySystem into styled QGIS vector layers (points, lines, polygons) and syncs edits back to the ESDL model
-├── esdl.png            # Plugin toolbar/menu icon
-├── metadata.txt        # QGIS plugin metadata (name, version, author, description, etc.)
-├── requirements.txt    # Python dependencies (pyESDL) to install into QGIS's bundled interpreter
-├── LICENSE             # MIT license, duplicated here so it ships inside the installable plugin ZIP
-├── icons/              # Per-ESDL-class PNG icons (e.g. HeatingDemand.png, Battery.png) used as point-asset markers in esdl_visualize.py
+├── __init__.py             # Plugin entry point — wires the dock, dialogs, importer, and visualizer together
+├── esdl_io.py              # Local .esdl file import/export dialogs
+├── esdl_model.py           # Pure ESDL domain logic: ports/connections, asset creation, class discovery
+├── esdl_ecore.py           # Generic pyecore introspection helpers shared by the ESDL Browser and Table Editor
+├── esdl_visualize.py       # Renders the ESDL energy system as QGIS map layers and syncs edits back
+├── esdl.png                # Plugin toolbar/menu icon
+├── metadata.txt            # QGIS plugin metadata (name, version, author, description, etc.)
+├── requirements.txt        # Python dependencies (pyESDL) to install into QGIS's bundled interpreter
+├── LICENSE                 # Apache 2.0 license, duplicated here so it ships inside the installable plugin ZIP
+├── icons/                  # Per-ESDL-class marker icons used on the map
 └── ui/
-    ├── intro_dialog.py    # Entry-point dialog shown on plugin start: short intro text plus a button to load a local .esdl file
-    ├── dock.py            # QGIS dock panel shown after a file is loaded, with Add/Delete Asset, export/close actions, and a timestamped action log
-    ├── add_asset_dialog.py # Dialogs for the Add Asset flow: asset class/name picker, and the post-geometry attributes form
-    └── map_tools.py        # QGIS map canvas tools: point/line/polygon geometry capture for Add Asset, and single-click asset picking (e.g. for Delete Asset)
+    ├── intro_dialog.py         # Start screen for loading a local .esdl file
+    ├── dock.py                 # Main dock panel: asset/connection actions, ESDL Browser, Table Editor, export, action log
+    ├── add_asset_dialog.py     # Add Asset flow dialogs
+    ├── connection_dialogs.py   # Add/Delete Connection flow dialogs
+    ├── esdl_browser_dialog.py  # Generic ESDL object browser/editor
+    ├── table_editor_dialog.py  # Bulk attribute/reference editor across all assets of one type
+    └── map_tools.py            # Map canvas tools for geometry capture and asset/port picking
 ```
 
 ## Tutorials
 
-TODO
+Coming soon
 
 ## Contributions
 
-TODO
+### Bug reports and feature requests
+
+- Open an issue on GitHub with:
+  - A descriptive title and clear description
+  - A relevant label (`bug`, `enhancement`, `documentation`, etc.)
+  - An assignee if you have write access
+
+### Making Changes
+
+- Submit a pull request with your changes
+- Follow the existing [project structure](#project-structure) as much as possible
+- Include clear commit messages
+- Test your changes with QGIS before submitting
+
+### Releases
+
+Maintainers should follow this release workflow:
+
+1. **Version bump**: Update the version in [`src/metadata.txt`](src/metadata.txt) following [semantic versioning](https://semver.org/)
+2. **Git tag**: Create a git semantic tag
+3. **Release notes**: Create a release on GitHub with a summary of changes
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)
