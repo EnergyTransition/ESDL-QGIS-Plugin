@@ -27,6 +27,7 @@ class ESDLDock(QDockWidget):
         self._connect_callback = None
         self._disconnect_callback = None
         self._browse_esdl_callback = None
+        self._table_editor_callback = None
         self._export_callback = None
         self._close_callback = None
         self._build_ui(source_label)
@@ -93,6 +94,14 @@ class ESDLDock(QDockWidget):
         self._browse_esdl_btn.clicked.connect(self._on_browse_esdl)
         layout.addWidget(self._browse_esdl_btn)
 
+        self._table_editor_btn = QPushButton("Table Editor")
+        self._table_editor_btn.setToolTip(
+            "Edit asset attributes and configured references (e.g. "
+            "costInformation) across all assets of the same type in one table"
+        )
+        self._table_editor_btn.clicked.connect(self._on_table_editor)
+        layout.addWidget(self._table_editor_btn)
+
         layout.addSpacing(8)
 
         self._export_btn = QPushButton("Export as .esdl file")
@@ -136,6 +145,10 @@ class ESDLDock(QDockWidget):
         """Register a callable invoked when the user clicks 'Browse ESDL'."""
         self._browse_esdl_callback = fn
 
+    def set_table_editor_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Table Editor'."""
+        self._table_editor_callback = fn
+
     def set_close_callback(self, fn):
         """Register a callable invoked after the user confirms closing this dock."""
         self._close_callback = fn
@@ -163,6 +176,10 @@ class ESDLDock(QDockWidget):
     def _on_browse_esdl(self):
         if callable(self._browse_esdl_callback):
             self._browse_esdl_callback()
+
+    def _on_table_editor(self):
+        if callable(self._table_editor_callback):
+            self._table_editor_callback()
 
     def _on_export(self):
         if callable(self._export_callback):

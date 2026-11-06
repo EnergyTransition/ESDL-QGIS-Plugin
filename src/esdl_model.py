@@ -256,6 +256,48 @@ def list_asset_classes_grouped():
         return {"All": []}
 
 
+def list_present_asset_classes_grouped(energy_system):
+    """
+    Like list_asset_classes_grouped(), but filtered to class names that have
+    at least one instance in *energy_system*. Used by the Table Editor,
+    where an empty class would just produce an empty table.
+    """
+    present = {inst.eClass.name for inst in energy_system.eAllContents()}
+    groups = list_asset_classes_grouped()
+    filtered = OrderedDict()
+    for group_name, class_names in groups.items():
+        remaining = [c for c in class_names if c in present]
+        if remaining:
+            filtered[group_name] = remaining
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Table Editor configuration
+# ---------------------------------------------------------------------------
+
+# Each entry describes one top-level, single-valued containment reference
+# that the Table Editor (ui.table_editor_dialog.TableEditorDialog) can
+# flatten into a table. To support bulk-editing another reference, add an
+# entry here — no other code changes are needed.
+#
+#   label              - shown as the tree root label.
+#   ref_name           - the EReference name on the asset (e.g. "costInformation").
+#   type_name          - concrete type to instantiate if the reference is unset.
+#   default_child_type - concrete type to use for that reference's own
+#                        single-valued containment sub-references (ESDL cost
+#                        fields are typed as abstract `Cost`; SingleValue —
+#                        a scalar amount + unit — is the common case).
+BULK_EDIT_REFERENCES = [
+    {
+        "label": "Cost Information",
+        "ref_name": "costInformation",
+        "type_name": "CostInformation",
+        "default_child_type": "SingleValue",
+    },
+]
+
+
 # ---------------------------------------------------------------------------
 # Geometry type hints
 # ---------------------------------------------------------------------------
