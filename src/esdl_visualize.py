@@ -3,6 +3,8 @@ Converts a pyESDL EnergySystem into QGIS in-memory vector layers and
 provides sync-back so edits can be serialised back to an .esdl file.
 """
 
+import logging
+
 from qgis.core import (
     Qgis,
     QgsVectorLayer,
@@ -29,6 +31,8 @@ from pathlib import Path
 
 from .esdl_ecore import coerce_attr_value, describe_asset_attributes, set_esdl_attr
 from .esdl_model import iter_port_connections
+
+logger = logging.getLogger(__name__)
 
 # Fields that are part of every QGIS asset layer but are NOT necessarily ESDL EAttributes.
 _STANDARD_FIELD_NAMES = ("id", "name", "esdl_class", "area_name")
@@ -112,8 +116,9 @@ def _apply_abbreviation_label(layer, class_name: str) -> None:
         settings.setFormat(text_format)
         layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
         layer.setLabelsEnabled(True)
-    except Exception:
-        pass  # leave layer without a text label
+    except Exception as exc:
+        # leave layer without a text label
+        logger.debug("Could not label layer %r with class %r: %s", layer, class_name, exc)
 
 
 def _get_asset_capability(asset) -> "str | None":
@@ -166,8 +171,9 @@ def _apply_point_icon(layer, class_name: str, asset=None) -> None:
                 sym.appendSymbolLayer(raster)
 
         layer.renderer().setSymbol(sym)
-    except Exception:
-        pass  # leave default symbol intact
+    except Exception as exc:
+        # leave default symbol intact
+        logger.debug("Could not apply point icon for class %r: %s", class_name, exc)
 
     if not has_icon:
         _apply_abbreviation_label(layer, class_name)
@@ -184,8 +190,9 @@ def _apply_line_color(layer, class_name: str) -> None:
         return
     try:
         layer.renderer().symbol().setColor(QColor(color))
-    except Exception:
-        pass  # leave default symbol colour intact
+    except Exception as exc:
+        # leave default symbol colour intact
+        logger.debug("Could not apply line colour for class %r: %s", class_name, exc)
 
 
 def _apply_directional_symbol(layer) -> None:
@@ -308,8 +315,8 @@ def _closest_endpoint_on_geom(geometry, to_point: "QgsPointXY") -> "QgsPointXY |
         try:
             pt = geometry.exterior.point[0]
             return QgsPointXY(pt.lon, pt.lat)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not read polygon exterior point: %s", exc)
     qgs = _to_qgs_geom(geometry)
     if qgs is None or qgs.isEmpty():
         return None
@@ -339,15 +346,15 @@ def _geom_endpoint(geometry, use_last: bool = False):
             if pts:
                 p = pts[-1] if use_last else pts[0]
                 return p.lon, p.lat
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not read line endpoint: %s", exc)
     if kind == "Polygon":
         try:
             pts = list(geometry.exterior.point)
             if pts:
                 return pts[0].lon, pts[0].lat
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not read polygon exterior point: %s", exc)
     if kind == "WKT":
         qgs = _to_qgs_geom(geometry)
         if qgs and not qgs.isEmpty():
@@ -394,8 +401,8 @@ def qgs_geom_to_esdl(qgs_geom, geom_hint: str):
                 exterior.point.append(esdl.Point(lat=pt.y(), lon=pt.x()))
             poly.exterior = exterior
             return poly if len(exterior.point) >= 3 else None
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not convert QGIS geometry to ESDL %r: %s", geom_hint, exc)
     return None
 
 
