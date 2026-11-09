@@ -5,12 +5,15 @@ Generic helpers for reading and writing primitive EAttribute values on any
 pyecore-backed ESDL object.
 """
 
+import logging
 import uuid
 from collections import namedtuple
 
 from pyecore.ecore import EAttribute, ECollection, EClass, EEnum, EReference
 
 import esdl
+
+logger = logging.getLogger(__name__)
 
 AttributeDescriptor = namedtuple(
     "AttributeDescriptor", ["name", "value", "is_enum", "enum_options"]
@@ -82,8 +85,9 @@ def set_esdl_attr(asset, name: str, raw_value) -> None:
             setattr(asset, name, enum_cls.from_string(str(raw_value)))
         else:
             setattr(asset, name, str(raw_value) if raw_value is not None else None)
-    except Exception:
-        pass  # non-critical; leave the original value unchanged
+    except Exception as exc:
+        # non-critical; leave the original value unchanged
+        logger.debug("Could not set attribute %r on %r: %s", name, asset, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +188,8 @@ def find_types(reference):
             name = reference.eType.eClass.name
             if name not in subtypes:
                 subtypes.append(name)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not resolve subtypes for reference %r: %s", reference, exc)
     subtypes.sort()
     return subtypes
 

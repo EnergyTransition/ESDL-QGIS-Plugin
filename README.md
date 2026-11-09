@@ -102,7 +102,17 @@ ruff check .          # lint
 ruff format .         # auto-format
 ```
 
-A [GitHub Actions workflow](.github/workflows/lint.yml) runs both checks on every push and pull request.
+### Security Scanning
+
+This project uses [Bandit](https://bandit.readthedocs.io/) to catch common Python security issues (e.g. silently swallowed exceptions, unsafe deserialization) before publishing to the [QGIS Plugin Repository](https://plugins.qgis.org/), which runs its own Bandit scan on every upload.
+
+With the dev dependencies installed (see [Linting & Formatting](#linting--formatting) above), run:
+
+```bash
+bandit -r src
+```
+
+A [GitHub Actions workflow](.github/workflows/lint.yml) runs ruff and Bandit on every push.
 
 ## Tutorials
 
@@ -124,6 +134,7 @@ Coming soon
 - Include clear commit messages
 - Test your changes with QGIS before submitting
 - Lint and format your code with [ruff](#linting--formatting) before submitting
+- Run a [Bandit security scan](#security-scanning) before submitting
 
 ### Releases
 

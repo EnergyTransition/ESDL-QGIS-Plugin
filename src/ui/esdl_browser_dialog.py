@@ -2,6 +2,7 @@
 ESDL Browser — generic ESDL object browser and editor.
 """
 
+import logging
 import uuid
 
 from pyecore.ecore import ECollection
@@ -35,6 +36,8 @@ from ..esdl_ecore import (
     object_repr,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # =============================================================================
 # Shared scalar-attribute editor widgets (EAttribute forms)
@@ -67,8 +70,8 @@ def make_scalar_attr_editor(attr: dict) -> QWidget:
         try:
             v = attr.get("value")
             w.setValue(int(v) if v not in (None, "") else 0)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug("Could not parse int attribute value %r: %s", attr.get("value"), exc)
         w.blockSignals(False)
     elif attr["type"] in ("EDouble", "EFloat"):
         w = QDoubleSpinBox()
@@ -78,8 +81,8 @@ def make_scalar_attr_editor(attr: dict) -> QWidget:
         try:
             v = attr.get("value")
             w.setValue(float(v) if v not in (None, "") else 0.0)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug("Could not parse float attribute value %r: %s", attr.get("value"), exc)
         w.blockSignals(False)
     else:
         w = QLineEdit()
@@ -98,8 +101,8 @@ def flush_scalar_attr_editor(obj, attr_name: str, widget: QWidget):
             raw = widget.currentText()
             try:
                 obj.eSet(feature, feature.eType.from_string(raw))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not set %r from combo value %r: %s", attr_name, raw, exc)
         elif isinstance(widget, QSpinBox):
             obj.eSet(feature, widget.value())
         elif isinstance(widget, QDoubleSpinBox):
@@ -109,10 +112,10 @@ def flush_scalar_attr_editor(obj, attr_name: str, widget: QWidget):
             if raw:
                 try:
                     obj.eSet(feature, feature.eType.from_string(raw))
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as exc:
+                    logger.debug("Could not set %r from text value %r: %s", attr_name, raw, exc)
+    except Exception as exc:
+        logger.debug("Could not flush attribute editor for %r: %s", attr_name, exc)
 
 
 # =============================================================================

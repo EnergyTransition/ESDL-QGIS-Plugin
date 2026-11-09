@@ -6,12 +6,15 @@ port/connection topology, plus asset-creation, port/area-attachment and
 class-discovery helpers used by the Add Asset flow.
 """
 
+import logging
 import uuid
 from collections import OrderedDict
 
 from pyecore.ecore import EReference
 
 from esdl import esdl
+
+logger = logging.getLogger(__name__)
 
 
 def iter_port_connections(assets_by_class: dict):
@@ -90,8 +93,8 @@ def create_asset_with_geom(class_name: str, name: str, esdl_geom, attrs: dict = 
         for k, v in attrs.items():
             try:
                 setattr(asset, k, v)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not set attribute %r=%r on new asset: %s", k, v, exc)
     return asset
 
 
@@ -147,8 +150,8 @@ def get_connectable_ports(asset):
                 out_ports.append(port)
             elif isinstance(port, esdl.InPort):
                 in_ports.append(port)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read ports from %r: %s", asset, exc)
     return out_ports, in_ports
 
 
@@ -165,8 +168,8 @@ def disconnect_ports(out_port, in_port):
     """Remove the connectedTo link between *out_port* and *in_port*."""
     try:
         out_port.connectedTo.remove(in_port)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not disconnect %r from %r: %s", out_port, in_port, exc)
 
 
 def get_asset_connections(asset):
@@ -181,7 +184,8 @@ def get_asset_connections(asset):
     for out_port in out_ports:
         try:
             targets = list(out_port.connectedTo)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Could not read connectedTo on out_port %r: %s", out_port, exc)
             continue
         for in_port in targets:
             try:
@@ -193,7 +197,8 @@ def get_asset_connections(asset):
     for in_port in in_ports:
         try:
             sources = list(in_port.connectedTo)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Could not read connectedTo on in_port %r: %s", in_port, exc)
             continue
         for out_port in sources:
             try:
