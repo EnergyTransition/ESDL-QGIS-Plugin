@@ -24,7 +24,12 @@ Pick one of the following, depending on your situation.
 
 ### Option 2: Install from the official QGIS Plugin Repository
 
-**Not available yet** — the plugin is not currently published on [plugins.qgis.org](https://plugins.qgis.org/). Once it is, installation will be as simple as searching for "ESDL QGIS Plugin" in **Plugins → Manage and Install Plugins**.
+The plugin is currently published on [plugins.qgis.org](https://plugins.qgis.org/) as an experimental plugin. Experimental plugins are hidden by default, so you'll need to enable them first:
+
+1. In QGIS, go to **Plugins → Manage and Install Plugins**.
+2. Open the **Settings** tab.
+3. Check **Show also Experimental Plugins**.
+4. Switch to the **All** tab, search for **ESDL QGIS Plugin**, and install it.
 
 ### Option 3: Development setup (local development only)
 
