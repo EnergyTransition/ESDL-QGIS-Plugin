@@ -419,7 +419,7 @@ def qgs_geom_to_esdl(qgs_geom, geom_hint: str):
 def _write_esdl_points(esdl_points, qgs_points) -> None:
     """
     Overwrite a pyESDL Point list in place with *qgs_points*. Existing Point
-    objects are reused; the list is grown or shrunk when vertices were 
+    objects are reused; the list is grown or shrunk when vertices were
     added or removed.
     """
     for i, pt in enumerate(qgs_points):

@@ -399,7 +399,7 @@ class ESDLPlugin:
         bar = self.iface.messageBar()
         widget = bar.createMessage(
             "ESDL",
-            f"Drag a vertex to move it, or switch to "
+            "Drag a vertex to move it, or switch to "
             "'Move whole asset'. Esc or right-click cancels.",
         )
         buttons = (
