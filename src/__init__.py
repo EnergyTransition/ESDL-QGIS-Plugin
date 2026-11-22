@@ -300,8 +300,7 @@ class ESDLPlugin:
         self.iface.mapCanvas().setMapTool(tool)
         self.iface.messageBar().pushMessage(
             "ESDL",
-            "Click an asset on the map to open it in the ESDL Browser. "
-            "Right-click cancels.",
+            "Click an asset on the map to open it in the ESDL Browser. Right-click cancels.",
             level=0,
             duration=8,
         )
@@ -564,8 +563,7 @@ class ESDLPlugin:
         self.iface.mapCanvas().setMapTool(tool)
         self.iface.messageBar().pushMessage(
             "ESDL",
-            "Click an asset on the map to remove one of its connections. "
-            "Right-click cancels.",
+            "Click an asset on the map to remove one of its connections. Right-click cancels.",
             level=0,
             duration=8,
         )
