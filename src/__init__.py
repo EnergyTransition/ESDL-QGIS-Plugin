@@ -1,9 +1,11 @@
 import os
 from pathlib import Path
 
-from qgis.PyQt.QtWidgets import QAction, QDialog, QMessageBox
+from qgis.PyQt.QtWidgets import QAction, QDialog, QMessageBox, QPushButton
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt import sip
+from qgis.core import Qgis
 
 from . import esdl_model
 from .esdl_io import export_esdl_file
@@ -16,6 +18,7 @@ from .ui.intro_dialog import ESDLIntroDialog
 from .ui.table_editor_dialog import TableEditorDialog
 from .ui.map_tools import (
     AssetPickerMapTool,
+    CanvasCancelFilter,
     ConnectAssetsMapTool,
     LineCaptureMapTool,
     PointCaptureMapTool,
@@ -37,11 +40,15 @@ class ESDLPlugin:
         self._dock = None
         self._active_map_tool = None
         self._logged_layer_ids = set()
+        # Active Move Asset edit session: {"layer", "asset_name", "tools", "msg_item"}
+        self._move_session = None
+        # Switch between QGIS's Vertex Tool and Move Feature tool
+        self._switching_move_tool = False
 
     def initGui(self):
         # Create an action (i.e. a button) with Logo
         icon = QIcon(os.path.join(self.wd, "esdl.png"))
-        self.action = QAction(icon, "ESDL QGIS Plugin", self.iface.mainWindow())
+        self.action = QAction(icon, "ESDL QGIS Plugin dev", self.iface.mainWindow())
 
         self.action.triggered.connect(self.run)
 
@@ -49,6 +56,7 @@ class ESDLPlugin:
         self.iface.addToolBarIcon(self.action)
 
     def unload(self):
+        self._finish_move_session()
         self.iface.removeToolBarIcon(self.action)
         if self._dock is not None:
             self.iface.removeDockWidget(self._dock)
@@ -85,6 +93,7 @@ class ESDLPlugin:
         self._close_current()
 
     def _close_current(self):
+        self._finish_move_session()
         if self._dock is not None:
             self.iface.removeDockWidget(self._dock)
             self._dock = None
@@ -116,6 +125,7 @@ class ESDLPlugin:
         self._dock.set_export_callback(self._export)
         self._dock.set_add_asset_callback(self._start_add_asset)
         self._dock.set_edit_asset_callback(self._start_edit_asset)
+        self._dock.set_move_asset_callback(self._start_move_asset)
         self._dock.set_delete_asset_callback(self._start_delete_asset)
         self._dock.set_connect_callback(self._start_connect)
         self._dock.set_disconnect_callback(self._start_disconnect)
@@ -135,6 +145,7 @@ class ESDLPlugin:
 
     def _on_dock_closed(self):
         """Called after the user confirms closing the ESDL dock (closeEvent already accepted)."""
+        self._finish_move_session()
         if self.visualizer is not None:
             self.visualizer.remove_layers()
             self.visualizer = None
@@ -145,6 +156,7 @@ class ESDLPlugin:
         self._logged_layer_ids.clear()
 
     def _export(self):
+        self._finish_move_session()
         if self.visualizer is not None:
             self.visualizer.sync_from_layers()
         result = export_esdl_file(self.iface.mainWindow(), self.esh, self.energy_system)
@@ -165,8 +177,10 @@ class ESDLPlugin:
 
     def _connect_layer_log_signals(self, layer):
         """
-        Hook a layer's attribute/geometry edit signals so direct QGIS
-        feature-table edits are recorded in the dock's action log.
+        Hook a layer's edit signals so QGIS feature edits (Move Asset, or the
+        attribute table) are synced to the model and recorded in the dock's
+        action log. Only committed edits are logged, so dragging, undo and
+        cancelled sessions don't flood the log.
         Idempotent: a layer that is already connected is skipped, so this
         is safe to call again for layers created after the initial load
         (e.g. the first asset of a newly-added class).
@@ -174,16 +188,45 @@ class ESDLPlugin:
         if layer is None or layer.id() in self._logged_layer_ids:
             return
         self._logged_layer_ids.add(layer.id())
-        layer.attributeValueChanged.connect(
-            lambda fid, idx, val, lyr=layer: self._log_change(
-                f"[{lyr.name()}] feature {fid}: '{lyr.fields()[idx].name()}' \u2192 {val!r}"
-            )
+        layer.committedAttributeValuesChanges.connect(
+            lambda _layer_id, changes, lyr=layer: self._log_committed_attributes(lyr, changes)
         )
+        layer.committedGeometriesChanges.connect(
+            lambda _layer_id, changes, lyr=layer: self._log_committed_geometries(lyr, changes)
+        )
+        # Sync the model on every (uncommitted) geometry edit, not only on
+        # commit: connection lines then follow the asset while it is dragged,
+        # and undo/redo/roll-back re-emit this signal, restoring the model.
         layer.geometryChanged.connect(
-            lambda fid, geom, lyr=layer: self._log_change(
-                f"[{lyr.name()}] feature {fid}: geometry moved"
-            )
+            lambda fid, geom, lyr=layer: self._on_layer_geometry_changed(lyr, fid, geom)
         )
+
+    @staticmethod
+    def _feature_label(layer, fid) -> str:
+        feat = layer.getFeature(fid)
+        name = feat["name"] if feat.isValid() else None
+        return f"[{layer.name()}] '{name}'" if name else f"[{layer.name()}] feature {fid}"
+
+    def _log_committed_attributes(self, layer, changes):
+        """Log attribute edits saved to *layer*; *changes* maps fid -> {field_idx: value}."""
+        fields = layer.fields()
+        for fid, values in changes.items():
+            parts = ", ".join(
+                f"'{fields[idx].name()}' \u2192 {val!r}" for idx, val in values.items()
+            )
+            self._log_change(f"{self._feature_label(layer, fid)}: {parts}")
+
+    def _log_committed_geometries(self, layer, changes):
+        """Log geometry edits saved to *layer*; *changes* maps fid -> QgsGeometry."""
+        for fid in changes:
+            self._log_change(f"{self._feature_label(layer, fid)}: geometry moved")
+
+    def _on_layer_geometry_changed(self, layer, fid, geom):
+        """Write an edited feature geometry into the model and redraw connections."""
+        if self.visualizer is None:
+            return
+        if self.visualizer.update_asset_geometry(layer, fid, geom) is not None:
+            self.visualizer.refresh_connections()
 
     # ------------------------------------------------------------------
     # Add-asset flow
@@ -257,7 +300,7 @@ class ESDLPlugin:
         self.iface.mapCanvas().setMapTool(tool)
         self.iface.messageBar().pushMessage(
             "ESDL",
-            "Click an asset on the map to open it in the ESDL Browser.",
+            "Click an asset on the map to open it in the ESDL Browser. Right-click cancels.",
             level=0,
             duration=8,
         )
@@ -278,6 +321,153 @@ class ESDLPlugin:
         self.visualizer.refresh_layers()
 
     # ------------------------------------------------------------------
+    # Move-asset flow
+    # ------------------------------------------------------------------
+
+    def _start_move_asset(self):
+        """Activate the single-click map tool for selecting an asset to move."""
+        tool = AssetPickerMapTool(self.iface.mapCanvas(), self.visualizer)
+        tool.asset_selected.connect(self._on_asset_selected_for_move)
+        self._active_map_tool = tool
+        self.iface.mapCanvas().setMapTool(tool)
+        self.iface.messageBar().pushMessage(
+            "ESDL",
+            "Hover to highlight an asset, click it to move it. Esc or right-click cancels.",
+            level=0,
+            duration=8,
+        )
+
+    def _on_asset_selected_for_move(self, asset_id: str):
+        """
+        Put the picked asset's layer in edit mode and hand over to QGIS's
+        built-in Vertex Tool (or Move Feature). Geometry edits are synced to
+        the model live via _on_layer_geometry_changed; the edit session is
+        committed when the user leaves these tools (see _finish_move_session).
+        """
+        self._finish_move_session()
+        layer, fid = self.visualizer.find_feature_for_asset(asset_id)
+        asset = self.visualizer.get_asset_by_id(asset_id)
+        if layer is None or fid is None or asset is None:
+            return
+        if not layer.isEditable() and not layer.startEditing():
+            self.iface.messageBar().pushMessage(
+                "ESDL", f"Layer '{layer.name()}' cannot be edited.", level=2
+            )
+            return
+
+        asset_name = getattr(asset, "name", None) or asset_id
+        self.iface.setActiveLayer(layer)
+        layer.selectByIds([fid])
+        self._move_session = {
+            "layer": layer,
+            "asset_name": asset_name,
+            "tools": set(),
+            "msg_item": None,
+            "cancel_filter": None,
+        }
+        self._activate_move_tool(whole_asset=False)
+        canvas = self.iface.mapCanvas()
+        canvas.mapToolSet.connect(self._on_map_tool_set_during_move)
+        # Esc / right-click are intercepted before QGIS's tools see them.
+        cancel_filter = CanvasCancelFilter(canvas)
+        cancel_filter.cancel_requested.connect(lambda: self._finish_move_session(revert=True))
+        canvas.installEventFilter(cancel_filter)
+        canvas.viewport().installEventFilter(cancel_filter)
+        self._move_session["cancel_filter"] = cancel_filter
+        self._move_session["msg_item"] = self._push_move_message()
+
+    def _move_tool_actions(self):
+        return (self.iface.actionVertexToolActiveLayer(), self.iface.actionMoveFeature())
+
+    def _activate_move_tool(self, whole_asset: bool):
+        """Switch between QGIS's Vertex Tool and Move Feature tool."""
+        if self._move_session is None:
+            return
+        vertex_action, move_action = self._move_tool_actions()
+        self._switching_move_tool = True
+        try:
+            (move_action if whole_asset else vertex_action).trigger()
+        finally:
+            self._switching_move_tool = False
+        tool = self.iface.mapCanvas().mapTool()
+        if tool is not None:
+            self._move_session["tools"].add(tool)
+
+    def _push_move_message(self):
+        """Show a message bar with tool-switch and Done buttons for the move session."""
+        bar = self.iface.messageBar()
+        widget = bar.createMessage(
+            "ESDL",
+            "Drag a vertex to move it, or switch to "
+            "'Move whole asset'. Esc or right-click cancels.",
+        )
+        buttons = (
+            ("Vertex tool", lambda: self._activate_move_tool(whole_asset=False)),
+            ("Move whole asset", lambda: self._activate_move_tool(whole_asset=True)),
+            ("Done", self._finish_move_session),
+            ("Cancel", lambda: self._finish_move_session(revert=True)),
+        )
+        for label, slot in buttons:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked=False, fn=slot: fn())
+            widget.layout().addWidget(btn)
+        return bar.pushWidget(widget, Qgis.Info)
+
+    def _on_map_tool_set_during_move(self, new_tool, _old_tool=None):
+        """End the move session as soon as the user switches to an unrelated tool."""
+        if self._switching_move_tool or self._move_session is None:
+            return
+        if new_tool is not None:
+            if new_tool in self._move_session["tools"]:
+                return
+            if new_tool.action() in self._move_tool_actions():
+                self._move_session["tools"].add(new_tool)
+                return
+        self._finish_move_session()
+
+    def _finish_move_session(self, revert: bool = False):
+        """
+        End the move session: restore the Pan tool, then commit the edits
+        (or roll them back when *revert* is True) and clear the selection.
+        """
+        session = self._move_session
+        if session is None:
+            return
+        self._move_session = None
+        canvas = self.iface.mapCanvas()
+        try:
+            canvas.mapToolSet.disconnect(self._on_map_tool_set_during_move)
+        except TypeError:
+            pass
+        cancel_filter = session["cancel_filter"]
+        if cancel_filter is not None and not sip.isdeleted(cancel_filter):
+            canvas.removeEventFilter(cancel_filter)
+            canvas.viewport().removeEventFilter(cancel_filter)
+            cancel_filter.deleteLater()
+
+        # Leave QGIS's editing tool first so an in-progress drag is dropped
+        # before the edit buffer is committed or rolled back.
+        if canvas.mapTool() in session["tools"]:
+            self.iface.actionPan().trigger()
+
+        layer = session["layer"]
+        if not sip.isdeleted(layer):
+            # Roll-back re-emits geometryChanged, which restores the model too.
+            # Saved edits are logged by the layer's committed* signals.
+            if revert:
+                if layer.isEditable():
+                    layer.rollBack()
+            elif layer.isEditable() and not layer.commitChanges():
+                errors = "; ".join(layer.commitErrors())
+                layer.rollBack()
+                self._log_change(f"Move of '{session['asset_name']}' reverted: {errors}")
+            layer.removeSelection()
+
+        msg_item = session["msg_item"]
+        if msg_item is not None and not sip.isdeleted(msg_item):
+            self.iface.messageBar().popWidget(msg_item)
+
+    # ------------------------------------------------------------------
     # Delete-asset flow
     # ------------------------------------------------------------------
 
@@ -289,7 +479,7 @@ class ESDLPlugin:
         self.iface.mapCanvas().setMapTool(tool)
         self.iface.messageBar().pushMessage(
             "ESDL",
-            "Click an asset on the map to delete it.",
+            "Click an asset on the map to delete it. Right-click cancels.",
             level=0,
             duration=8,
         )
@@ -330,7 +520,8 @@ class ESDLPlugin:
         self.iface.mapCanvas().setMapTool(tool)
         self.iface.messageBar().pushMessage(
             "ESDL",
-            "Click the source asset, then the target asset.",
+            "Click the source asset, then the target asset. Right-click undoes the "
+            "source pick (or cancels if none is picked); Esc cancels.",
             level=0,
             duration=8,
         )
@@ -372,7 +563,7 @@ class ESDLPlugin:
         self.iface.mapCanvas().setMapTool(tool)
         self.iface.messageBar().pushMessage(
             "ESDL",
-            "Click an asset on the map to remove one of its connections.",
+            "Click an asset on the map to remove one of its connections. Right-click cancels.",
             level=0,
             duration=8,
         )
@@ -407,6 +598,7 @@ class ESDLPlugin:
 
     def _start_browse_esdl(self):
         """Open the ESDL Browser dialog, log user changes, and refresh layers."""
+        self._finish_move_session()
         dlg = EsdlBrowserDialog(self.energy_system, parent=self.iface.mainWindow())
         dlg.exec_()
         # dlg.changes reflects edits already flushed to the model (attribute
@@ -422,6 +614,7 @@ class ESDLPlugin:
 
     def _start_table_editor(self):
         """Open the Table Editor dialog, log on accept, and refresh layers."""
+        self._finish_move_session()
         dlg = TableEditorDialog(self.energy_system, parent=self.iface.mainWindow())
         if dlg.exec_() == QDialog.Accepted:
             self._log_change("Edited asset(s) via Table Editor")

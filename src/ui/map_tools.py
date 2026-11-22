@@ -6,7 +6,7 @@ the map, and a two-click tool for selecting a source/target asset pair to
 connect.
 """
 
-from qgis.gui import QgsMapTool, QgsRubberBand, QgsVertexMarker
+from qgis.gui import QgsHighlight, QgsMapTool, QgsRubberBand, QgsVertexMarker
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
@@ -14,7 +14,7 @@ from qgis.core import (
     QgsProject,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 
 from ..esdl_visualize import _closest_endpoint_on_geom
@@ -146,14 +146,65 @@ class PolygonCaptureMapTool(QgsMapTool):
         super().deactivate()
 
 
+class AssetHoverHighlighter:
+    """
+    Highlights the ESDL asset under the cursor (as found by the visualizer's
+    hit test) and shows a pointing-hand cursor over it. Shared by the asset
+    picker and the connect tool so every asset-selection flow previews what
+    a click would select.
+    """
+
+    def __init__(self, canvas, visualizer, idle_cursor=Qt.CursorShape.CrossCursor):
+        self._canvas = canvas
+        self._visualizer = visualizer
+        # Cursor shown when not over an asset; matches QgsMapTool's default cross.
+        self._idle_cursor = idle_cursor
+        self._highlight = None
+        self._hover_key = None  # (layer_id, feature_id) currently highlighted
+
+    def update(self, map_point, tolerance: float, skip_asset_id=None):
+        """Highlight the asset at *map_point*, ignoring the asset *skip_asset_id*."""
+        layer, fid = self._visualizer.find_feature_near(map_point, tolerance)
+        if layer is not None and skip_asset_id is not None:
+            if layer.getFeature(fid)["id"] == skip_asset_id:
+                layer, fid = None, None
+        key = (layer.id(), fid) if layer is not None else None
+        if key == self._hover_key:
+            return
+        self.clear()
+        self._hover_key = key
+        if layer is None:
+            self._canvas.setCursor(self._idle_cursor)
+            return
+        self._highlight = QgsHighlight(self._canvas, layer.getFeature(fid), layer)
+        self._highlight.setColor(QColor(255, 0, 0, 220))
+        self._highlight.setFillColor(QColor(255, 0, 0, 60))
+        self._highlight.setWidth(3)
+        self._highlight.show()
+        self._canvas.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def clear(self):
+        """Remove the highlight (the cursor is left as is)."""
+        if self._highlight is not None:
+            self._canvas.scene().removeItem(self._highlight)
+            self._highlight = None
+        self._hover_key = None
+
+    def reset(self):
+        """Remove the highlight and restore the tool's idle cursor."""
+        self.clear()
+        self._canvas.setCursor(self._idle_cursor)
+
+
 class AssetPickerMapTool(QgsMapTool):
     """
-    Single left-click identifies the nearest ESDL asset (via the visualizer's
-    spatial lookup) and emits *asset_selected* with its id string. Right-click
-    cancels.
+    Single left-click identifies the ESDL asset under the cursor (via the
+    visualizer's spatial lookup) and emits *asset_selected* with its id
+    string. The asset that would be picked is highlighted while hovering.
+    Right-click or Esc cancels.
 
-    Generic on purpose: shared by Edit Asset, Delete Asset, and Delete
-    Connection, any single-click asset-selection flow, without duplication.
+    Generic on purpose: shared by Edit Asset, Move Asset, Delete Asset, and
+    Delete Connection, any single-click asset-selection flow, without duplication.
     """
 
     asset_selected = pyqtSignal(str)  # asset_id
@@ -161,19 +212,60 @@ class AssetPickerMapTool(QgsMapTool):
     def __init__(self, canvas, visualizer):
         super().__init__(canvas)
         self._visualizer = visualizer
+        self._hover = AssetHoverHighlighter(canvas, visualizer)
 
     def _tolerance(self) -> float:
         return self.canvas().mapUnitsPerPixel() * 10
 
+    def canvasMoveEvent(self, event):
+        self._hover.update(self.toMapCoordinates(event.pos()), self._tolerance())
+
     def canvasReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             point = self.toMapCoordinates(event.pos())
             asset_id = self._visualizer.find_asset_id_near(point, self._tolerance())
             if asset_id is not None:
                 self.asset_selected.emit(asset_id)
                 self.canvas().unsetMapTool(self)
-        elif event.button() == Qt.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton:
             self.canvas().unsetMapTool(self)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.canvas().unsetMapTool(self)
+
+    def deactivate(self):
+        self._hover.reset()
+        super().deactivate()
+
+
+class CanvasCancelFilter(QObject):
+    """
+    Event filter that turns Esc and right-click on the map canvas into a
+    *cancel_requested* signal, swallowing the events so the active QGIS tool
+    (e.g. the built-in Vertex Tool) does not also react to them. Install it on
+    both the canvas (key events) and its viewport (mouse events).
+    """
+
+    cancel_requested = pyqtSignal()
+
+    def eventFilter(self, obj, event):
+        etype = event.type()
+        if etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            self._emit_later()
+            return True
+        if etype in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+            if event.button() == Qt.MouseButton.RightButton:
+                return True
+        if etype == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.RightButton:
+            self._emit_later()
+            return True
+        return False
+
+    def _emit_later(self):
+        # Defer so the cancel (tool switch + roll-back) runs outside the
+        # canvas's own event handling.
+        QTimer.singleShot(0, self.cancel_requested.emit)
 
 
 class ConnectAssetsMapTool(QgsMapTool):
@@ -186,6 +278,11 @@ class ConnectAssetsMapTool(QgsMapTool):
     2. Second click — identifies the target asset; emits *assets_selected* with
                       the two asset IDs, then deactivates.
 
+    In both steps the asset a click would select is highlighted while
+    hovering (the already-picked source is not highlighted again).
+    Right-click undoes the source pick, or cancels when nothing is picked;
+    Esc cancels.
+
     Requires a reference to an ESDLVisualizer for spatial feature lookup.
     """
 
@@ -194,6 +291,7 @@ class ConnectAssetsMapTool(QgsMapTool):
     def __init__(self, canvas, visualizer):
         super().__init__(canvas)
         self._visualizer = visualizer
+        self._hover = AssetHoverHighlighter(canvas, visualizer)
         self._source_id = None
         self._anchor_pt = None
         self._rubber_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
@@ -210,7 +308,7 @@ class ConnectAssetsMapTool(QgsMapTool):
         return self.canvas().mapUnitsPerPixel() * 10
 
     def canvasReleaseEvent(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             if self._source_id is not None:
                 # Undo the partial pick instead of forcing the user to
                 # finish an unwanted connection first.
@@ -218,7 +316,7 @@ class ConnectAssetsMapTool(QgsMapTool):
             else:
                 self.canvas().unsetMapTool(self)
             return
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         point = self.toMapCoordinates(event.pos())
         asset_id = self._visualizer.find_asset_id_near(point, self._tolerance())
@@ -239,6 +337,8 @@ class ConnectAssetsMapTool(QgsMapTool):
             if self._anchor_pt is not None:
                 self._marker.setCenter(self._anchor_pt)
                 self._marker.show()
+            # The source can't also be the target; drop its hover highlight.
+            self._hover.reset()
         elif asset_id != self._source_id:
             self._rubber_band.reset()
             self._marker.hide()
@@ -246,13 +346,14 @@ class ConnectAssetsMapTool(QgsMapTool):
             self.canvas().unsetMapTool(self)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.canvas().unsetMapTool(self)
 
     def canvasMoveEvent(self, event):
+        cur_pt = self.toMapCoordinates(event.pos())
+        self._hover.update(cur_pt, self._tolerance(), skip_asset_id=self._source_id)
         if self._source_id is None or self._anchor_pt is None:
             return
-        cur_pt = self.toMapCoordinates(event.pos())
         self._rubber_band.reset(QgsWkbTypes.LineGeometry)
         self._rubber_band.addPoint(self._anchor_pt)
         self._rubber_band.addPoint(cur_pt)
@@ -265,6 +366,7 @@ class ConnectAssetsMapTool(QgsMapTool):
         self._marker.hide()
 
     def deactivate(self):
+        self._hover.reset()
         self._rubber_band.reset()
         self._marker.hide()
         self._source_id = None
