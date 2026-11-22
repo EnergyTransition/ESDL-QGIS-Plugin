@@ -24,6 +24,7 @@ from qgis.core import (
     QgsPalLayerSettings,
     QgsTextFormat,
     QgsVectorLayerSimpleLabeling,
+    QgsWkbTypes,
 )
 from qgis.PyQt.QtCore import QVariant, Qt
 from qgis.PyQt.QtGui import QColor, QFont
@@ -580,7 +581,7 @@ class ESDLVisualizer:
             if layer is not None:
                 self._layers[class_name] = layer
                 QgsProject.instance().addMapLayer(layer, False)
-                group.addLayer(layer)
+                self._insert_layer_ordered(group, layer)
 
         # Optional area layer
         if area_list:
@@ -588,7 +589,7 @@ class ESDLVisualizer:
             if area_layer is not None:
                 self._layers["_areas"] = area_layer
                 QgsProject.instance().addMapLayer(area_layer, False)
-                group.addLayer(area_layer)
+                self._insert_layer_ordered(group, area_layer)
 
         # Connections layer — built from OutPort.connectedTo references.
         # Display-only in this version: existing connections are rendered,
@@ -599,9 +600,37 @@ class ESDLVisualizer:
             if conn_layer is not None:
                 self._layers["_connections"] = conn_layer
                 QgsProject.instance().addMapLayer(conn_layer, False)
-                group.insertLayer(0, conn_layer)  # draw below asset points
+                self._insert_layer_ordered(group, conn_layer)
 
         return list(self._layers.values())
+
+    def _layer_draw_rank(self, layer) -> int:
+        """Lower rank = higher in the layer tree = drawn on top."""
+        if layer is self._layers.get("_areas"):
+            return 3
+        geom_type = layer.geometryType() if isinstance(layer, QgsVectorLayer) else None
+        if geom_type == QgsWkbTypes.PointGeometry:
+            return 0
+        if geom_type == QgsWkbTypes.PolygonGeometry:
+            return 1
+        if geom_type == QgsWkbTypes.LineGeometry:
+            return 2
+        return 1
+
+    def _insert_layer_ordered(self, parent, layer) -> None:
+        """
+        Insert *layer* into *parent* (layer-tree group or root) so that point
+        layers sit above polygon assets, which sit above line layers (pipes,
+        cables, connections), with the Areas background layer at the bottom.
+        """
+        rank = self._layer_draw_rank(layer)
+        index = len(parent.children())
+        for i, child in enumerate(parent.children()):
+            child_layer = child.layer() if hasattr(child, "layer") else None
+            if child_layer is not None and self._layer_draw_rank(child_layer) > rank:
+                index = i
+                break
+        parent.insertLayer(index, layer)
 
     def _build_asset_layer(self, class_name: str, entries: list):
         # Find first usable geometry to determine layer type
@@ -905,10 +934,7 @@ class ESDLVisualizer:
                 None,
             )
             QgsProject.instance().addMapLayer(layer, False)
-            if group is not None:
-                group.addLayer(layer)
-            else:
-                root.addLayer(layer)
+            self._insert_layer_ordered(group if group is not None else root, layer)
             layer.triggerRepaint()
             return layer
 
@@ -953,10 +979,7 @@ class ESDLVisualizer:
                 None,
             )
             QgsProject.instance().addMapLayer(layer, False)
-            if group is not None:
-                group.insertLayer(0, layer)
-            else:
-                root.addLayer(layer)
+            self._insert_layer_ordered(group if group is not None else root, layer)
 
         layer = self._layers["_connections"]
         f = QgsFeature(layer.fields())
