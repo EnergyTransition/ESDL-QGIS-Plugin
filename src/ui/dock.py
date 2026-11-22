@@ -23,6 +23,7 @@ class ESDLDock(QDockWidget):
         self._energy_system = energy_system
         self._add_asset_callback = None
         self._edit_asset_callback = None
+        self._move_asset_callback = None
         self._delete_asset_callback = None
         self._connect_callback = None
         self._disconnect_callback = None
@@ -59,6 +60,13 @@ class ESDLDock(QDockWidget):
         self._edit_asset_btn.setToolTip("Click an asset on the map to open it in the ESDL Browser")
         self._edit_asset_btn.clicked.connect(self._on_edit_asset)
         asset_row.addWidget(self._edit_asset_btn)
+
+        self._move_asset_btn = QPushButton("Move Asset")
+        self._move_asset_btn.setToolTip(
+            "Click an asset on the map, then drag its vertices or the whole asset"
+        )
+        self._move_asset_btn.clicked.connect(self._on_move_asset)
+        asset_row.addWidget(self._move_asset_btn)
 
         self._delete_asset_btn = QPushButton("Delete Asset")
         self._delete_asset_btn.setToolTip("Click an asset on the map to delete it")
@@ -121,6 +129,10 @@ class ESDLDock(QDockWidget):
         """Register a callable invoked when the user clicks 'Edit Asset'."""
         self._edit_asset_callback = fn
 
+    def set_move_asset_callback(self, fn):
+        """Register a callable invoked when the user clicks 'Move Asset'."""
+        self._move_asset_callback = fn
+
     def set_delete_asset_callback(self, fn):
         """Register a callable invoked when the user clicks 'Delete Asset'."""
         self._delete_asset_callback = fn
@@ -156,6 +168,10 @@ class ESDLDock(QDockWidget):
     def _on_edit_asset(self):
         if callable(self._edit_asset_callback):
             self._edit_asset_callback()
+
+    def _on_move_asset(self):
+        if callable(self._move_asset_callback):
+            self._move_asset_callback()
 
     def _on_delete_asset(self):
         if callable(self._delete_asset_callback):

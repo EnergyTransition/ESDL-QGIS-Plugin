@@ -14,6 +14,7 @@ from qgis.core import (
     QgsField,
     QgsProject,
     QgsRectangle,
+    QgsExpression,
     QgsFeatureRequest,
     QgsLineSymbol,
     QgsMarkerSymbol,
@@ -28,6 +29,8 @@ from qgis.PyQt.QtCore import QVariant, Qt
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.PyQt import sip
 from pathlib import Path
+
+from esdl import esdl
 
 from .esdl_ecore import coerce_attr_value, describe_asset_attributes, set_esdl_attr
 from .esdl_model import iter_port_connections
@@ -60,6 +63,14 @@ _CAPABILITY_COLORS = {
 _UNKNOWN_CAPABILITY_COLOR = "lightgray"
 
 _CONNECTION_LINE_WIDTH = "0.6"
+
+# Hit-test priority when a click touches several assets (lower wins):
+# points are drawn on top of lines, lines on top of polygons.
+_PICK_PRIORITY = {
+    Qgis.GeometryType.Point: 0,
+    Qgis.GeometryType.Line: 1,
+    Qgis.GeometryType.Polygon: 2,
+}
 
 # Marker sizes (mm) for the capability circle and its overlaid PNG icon.
 _CIRCLE_SIZE = 8.0
@@ -383,8 +394,6 @@ def qgs_geom_to_esdl(qgs_geom, geom_hint: str):
     geom_hint: 'Point', 'Line', or 'Polygon'.
     Returns None if conversion fails or the geometry is too small to be valid.
     """
-    from esdl import esdl
-
     try:
         if geom_hint == "Point":
             pt = qgs_geom.asPoint()
@@ -404,6 +413,65 @@ def qgs_geom_to_esdl(qgs_geom, geom_hint: str):
     except Exception as exc:
         logger.debug("Could not convert QGIS geometry to ESDL %r: %s", geom_hint, exc)
     return None
+
+
+def _write_esdl_points(esdl_points, qgs_points) -> None:
+    """
+    Overwrite a pyESDL Point list in place with *qgs_points*. Existing Point
+    objects are reused; the list is grown or shrunk when vertices were 
+    added or removed.
+    """
+    for i, pt in enumerate(qgs_points):
+        if i < len(esdl_points):
+            esdl_points[i].lon = pt.x()
+            esdl_points[i].lat = pt.y()
+        else:
+            esdl_points.append(esdl.Point(lat=pt.y(), lon=pt.x()))
+    while len(esdl_points) > len(qgs_points):
+        esdl_points.remove(esdl_points[-1])
+
+
+def apply_qgs_geom_to_esdl(geometry, qgs_geom) -> bool:
+    """
+    Write an edited QgsGeometry (EPSG:4326) back into an existing pyESDL
+    *geometry* object in place. Returns True on success.
+
+    Polygon: only the exterior ring is updated, because interior rings are
+    not rendered in QGIS and therefore cannot be edited there.
+    """
+    if geometry is None or qgs_geom is None or qgs_geom.isEmpty():
+        return False
+    kind = _geom_type_name(geometry)
+    try:
+        if kind == "Point":
+            pt = qgs_geom.asPoint()
+            geometry.lon = pt.x()
+            geometry.lat = pt.y()
+            return True
+        if kind == "Line":
+            pts = qgs_geom.asPolyline()
+            if len(pts) < 2:
+                return False
+            _write_esdl_points(geometry.point, pts)
+            return True
+        if kind == "Polygon" and type(geometry).__name__ == "Polygon":
+            rings = qgs_geom.asPolygon()
+            if not rings or len(rings[0]) < 3:
+                return False
+            ring = list(rings[0])
+            old = list(geometry.exterior.point)
+            # QGIS always closes rings; keep the ESDL ring open if it was open.
+            was_closed = len(old) > 1 and (old[0].lat, old[0].lon) == (old[-1].lat, old[-1].lon)
+            if not was_closed and len(ring) > 1 and ring[0] == ring[-1]:
+                ring = ring[:-1]
+            _write_esdl_points(geometry.exterior.point, ring)
+            return True
+        if kind == "WKT":
+            geometry.value = qgs_geom.asWkt()
+            return True
+    except Exception as exc:
+        logger.debug("Could not write QGIS geometry back to ESDL %r: %s", kind, exc)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -697,10 +765,26 @@ class ESDLVisualizer:
 
     def find_asset_id_near(self, map_point, tolerance: float):
         """
-        Search all asset layers for the first feature within *tolerance* map
-        units of *map_point* (a QgsPointXY, in the map canvas/project CRS).
-        Returns the feature's 'id' attribute string, or None if nothing is
-        found.
+        Return the 'id' of the asset feature under *map_point* (see
+        find_feature_near), or None if nothing is found.
+        """
+        layer, fid = self.find_feature_near(map_point, tolerance)
+        if layer is None:
+            return None
+        return layer.getFeature(fid)["id"]
+
+    def find_feature_near(self, map_point, tolerance: float):
+        """
+        Find the asset feature under *map_point* (a QgsPointXY in the map
+        canvas/project CRS) on the visible asset layers.
+
+        A feature is a hit when its real geometry, not just its bounding
+        box, lies within *tolerance* map units (a click inside a polygon is
+        distance 0). When several features are hit, points win over lines
+        and lines over polygons, matching the drawing order on the map; ties
+        go to the nearest feature.
+
+        Returns (layer, feature_id), or (None, None) if nothing is found.
         """
         rect = QgsRectangle(
             map_point.x() - tolerance,
@@ -716,12 +800,63 @@ class ESDLVisualizer:
         request.setDestinationCrs(
             QgsProject.instance().crs(), QgsProject.instance().transformContext()
         )
+        click = QgsGeometry.fromPointXY(map_point)
+        tree = QgsProject.instance().layerTreeRoot()
+        best_key, best = None, (None, None)
         for class_name, layer in self._layers.items():
             if class_name.startswith("_"):
                 continue
+            node = tree.findLayer(layer.id())
+            if node is not None and not node.isVisible():
+                continue
+            rank = _PICK_PRIORITY.get(layer.geometryType(), len(_PICK_PRIORITY))
+            # Returned geometries are already in the project CRS
+            # (setDestinationCrs), so they compare directly with *click*.
             for feat in layer.getFeatures(request):
-                return feat["id"]
-        return None
+                dist = feat.geometry().distance(click)
+                if dist < 0 or dist > tolerance:
+                    continue
+                key = (rank, dist)
+                if best_key is None or key < best_key:
+                    best_key, best = key, (layer, feat.id())
+        return best
+
+    def find_feature_for_asset(self, asset_id: str):
+        """
+        Return (layer, feature_id) of the QGIS feature representing
+        *asset_id*, or (None, None) if it is not drawn on any asset layer.
+        """
+        asset = self._asset_by_id.get(asset_id)
+        layer = self._layers.get(type(asset).__name__) if asset is not None else None
+        if layer is None:
+            return None, None
+        request = QgsFeatureRequest().setFilterExpression(
+            QgsExpression.createFieldEqualityExpression("id", asset_id)
+        )
+        for feat in layer.getFeatures(request):
+            return layer, feat.id()
+        return None, None
+
+    def update_asset_geometry(self, layer, fid, qgs_geom):
+        """
+        Write the (edited) geometry of feature *fid* on asset *layer* back
+        into its pyESDL asset. Returns the updated asset, or None when the
+        feature does not map to a known asset or the geometry can't be applied.
+        """
+        asset_layer_ids = {
+            lyr.id() for name, lyr in self._layers.items() if not name.startswith("_")
+        }
+        if layer is None or layer.id() not in asset_layer_ids:
+            return None
+        feat = layer.getFeature(fid)
+        if not feat.isValid():
+            return None
+        asset = self._asset_by_id.get(feat["id"])
+        if asset is None:
+            return None
+        if not apply_qgs_geom_to_esdl(getattr(asset, "geometry", None), qgs_geom):
+            return None
+        return asset
 
     def add_asset_to_layer(self, asset, area_name: str = ""):
         """
@@ -965,6 +1100,23 @@ class ESDLVisualizer:
                 self._extra_fields.pop(class_name, None)
 
         # Refresh connections layer
+        self._rebuild_connections(assets_by_class)
+
+    def refresh_connections(self):
+        """
+        Rebuild only the Connections layer from the current model, e.g. after
+        an asset geometry was moved. Unlike refresh_layers() this leaves the
+        asset layers untouched, so it is safe while they are in edit mode.
+        """
+        assets_by_class = {}
+        try:
+            root_area = self._es.instance[0].area
+        except (IndexError, AttributeError):
+            return
+        _collect_assets(root_area, assets_by_class, [])
+        self._rebuild_connections(assets_by_class)
+
+    def _rebuild_connections(self, assets_by_class: dict):
         if "_connections" in self._layers:
             conn_layer = self._layers["_connections"]
             pr = conn_layer.dataProvider()
