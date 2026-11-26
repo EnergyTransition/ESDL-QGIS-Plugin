@@ -1,10 +1,6 @@
 # ESDL QGIS Plugin
 
-Load, visualize, edit, and export [ESDL](https://energytransition.github.io/) energy system files directly in QGIS.
-
-## Status
-
-This project is publicly available as-is. There is no guarantee of future updates or maintenance.
+Load or create, visualize, edit, and export [ESDL](https://energytransition.github.io/) energy system files directly in QGIS.
 
 ## Requirements
 
@@ -65,7 +61,7 @@ Restart QGIS afterwards and enable the plugin via **Plugins → Manage and Insta
 ```text
 src/
 ├── __init__.py             # Plugin entry point — wires the dock, dialogs, importer, and visualizer together
-├── esdl_io.py              # Local .esdl file import/export dialogs
+├── esdl_io.py              # Local .esdl file import/export dialogs and new empty energy system creation
 ├── esdl_model.py           # Pure ESDL domain logic: ports/connections, asset creation, class discovery
 ├── esdl_ecore.py           # Generic pyecore introspection helpers shared by the ESDL Browser and Table Editor
 ├── esdl_visualize.py       # Renders the ESDL energy system as QGIS map layers and syncs edits back
@@ -75,7 +71,7 @@ src/
 ├── LICENSE                 # Apache 2.0 license, duplicated here so it ships inside the installable plugin ZIP
 ├── icons/                  # Per-ESDL-class marker icons used on the map
 └── ui/
-    ├── intro_dialog.py         # Start screen for loading a local .esdl file
+    ├── intro_dialog.py         # Start screen for opening a local .esdl file or creating a new one
     ├── dock.py                 # Main dock panel: asset/connection actions, ESDL Browser, Table Editor, export, action log
     ├── add_asset_dialog.py     # Add Asset flow dialogs
     ├── connection_dialogs.py   # Add/Delete Connection flow dialogs
