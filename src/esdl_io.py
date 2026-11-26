@@ -1,5 +1,6 @@
 """
-Local-file import/export for ESDL energy system files.
+Local-file import/export for ESDL energy system files, plus creation of new
+empty energy systems.
 """
 
 import os
@@ -33,6 +34,32 @@ def open_esdl_file(parent=None):
         return esh, energy_system, os.path.basename(path)
     except Exception as exc:
         QMessageBox.critical(parent, "Failed to load ESDL", str(exc))
+        return None
+
+
+def create_new_esdl(
+    parent=None,
+    es_name="New Energy System",
+    es_description=None,
+    instance_name="Untitled Instance",
+    top_area_name="Untitled Area",
+):
+    """
+    Create an empty energy system (EnergySystem -> Instance -> Area).
+
+    Returns (esh, energy_system, source_label), or None if creation failed.
+    """
+    try:
+        esh = EnergySystemHandler()
+        energy_system = esh.create_empty_energy_system(
+            es_name,
+            es_description=es_description,
+            inst_title=instance_name,
+            area_title=top_area_name,
+        )
+        return esh, energy_system, "New file (not yet saved)"
+    except Exception as exc:
+        QMessageBox.critical(parent, "Failed to create ESDL", str(exc))
         return None
 
 

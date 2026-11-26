@@ -617,6 +617,16 @@ class ESDLVisualizer:
             return 2
         return 1
 
+    def _layer_parent(self):
+        """
+        Layer-tree node new layers go into: the group created by
+        create_and_add_layers (tracked by reference, so renaming the energy
+        system doesn't break it), or the root if that group was removed.
+        """
+        if self._group is not None and not sip.isdeleted(self._group):
+            return self._group
+        return QgsProject.instance().layerTreeRoot()
+
     def _insert_layer_ordered(self, parent, layer) -> None:
         """
         Insert *layer* into *parent* (layer-tree group or root) so that point
@@ -927,14 +937,8 @@ class ESDLVisualizer:
             if layer is None:
                 return None
             self._layers[class_name] = layer
-            root = QgsProject.instance().layerTreeRoot()
-            group_name = self._es.name or "ESDL"
-            group = next(
-                (c for c in root.children() if hasattr(c, "name") and c.name() == group_name),
-                None,
-            )
             QgsProject.instance().addMapLayer(layer, False)
-            self._insert_layer_ordered(group if group is not None else root, layer)
+            self._insert_layer_ordered(self._layer_parent(), layer)
             layer.triggerRepaint()
             return layer
 
@@ -972,14 +976,8 @@ class ESDLVisualizer:
             )
             layer.renderer().setSymbol(symbol)
             self._layers["_connections"] = layer
-            root = QgsProject.instance().layerTreeRoot()
-            group_name = self._es.name or "ESDL"
-            group = next(
-                (c for c in root.children() if hasattr(c, "name") and c.name() == group_name),
-                None,
-            )
             QgsProject.instance().addMapLayer(layer, False)
-            self._insert_layer_ordered(group if group is not None else root, layer)
+            self._insert_layer_ordered(self._layer_parent(), layer)
 
         layer = self._layers["_connections"]
         f = QgsFeature(layer.fields())
